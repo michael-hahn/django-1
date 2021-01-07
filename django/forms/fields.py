@@ -32,6 +32,8 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
+from django.core.untrustedtypes import UntrustedInt
+
 __all__ = (
     'Field', 'CharField', 'IntegerField',
     'DateField', 'TimeField', 'DateTimeField', 'DurationField',
@@ -263,7 +265,7 @@ class IntegerField(Field):
     def to_python(self, value):
         """
         Validate that int() can be called on the input. Return the result
-        of int() or None for empty values.
+        of UntrustedInt() or None for empty values.
         """
         value = super().to_python(value)
         if value in self.empty_values:
@@ -275,7 +277,7 @@ class IntegerField(Field):
             value = int(self.re_decimal.sub('', str(value)))
         except (ValueError, TypeError):
             raise ValidationError(self.error_messages['invalid'], code='invalid')
-        return value
+        return UntrustedInt(value)
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
