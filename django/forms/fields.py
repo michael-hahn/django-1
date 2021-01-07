@@ -32,7 +32,7 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.core.untrustedtypes import UntrustedInt
+from django.core.untrustedtypes import UntrustedInt, UntrustedStr
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
@@ -230,7 +230,7 @@ class CharField(Field):
                 value = value.strip()
         if value in self.empty_values:
             return self.empty_value
-        return value
+        return UntrustedStr(value)
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
