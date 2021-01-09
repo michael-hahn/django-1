@@ -5,31 +5,29 @@ Subclass builtins classes
 
 class UntrustedInt(int):
     """Subclass Python builtin int class with Splice specific attributes."""
-    def __new__(cls, x, *args, untrusted=True, synthesized=False, **kargs):
+    def __new__(cls, x, *args, synthesized=False, **kargs):
         self = super().__new__(cls, x, *args, **kargs)
-        self.untrusted = untrusted
-        self.synthesized = synthesized
+        self._synthesized = synthesized
         return self
 
-    def is_untrusted(self):
-        return self.untrusted
+    @property
+    def synthesized(self):
+        return self._synthesized
 
-    def is_synthesized(self):
-        return self.synthesized
+    @synthesized.setter
+    def synthesized(self, synthesized):
+        self.synthesized = synthesized
 
     def __add__(self, value):
         res = super().__add__(value)
-        # result is untrusted if at least one operand is untrusted
-        untrusted = self.untrusted or value.untrusted
         # result is synthesized if at least one operand is synthesized
         synthesized = self.synthesized or value.synthesized
-        return self.__class__(res, untrusted=untrusted, synthesized=synthesized)
+        return self.__class__(res, synthesized=synthesized)
 
     def __sub__(self, value):
         res = super().__sub__(value)
-        untrusted = self.untrusted or value.untrusted
         synthesized = self.synthesized or value.synthesized
-        return self.__class__(res, untrusted=untrusted, synthesized=synthesized)
+        return self.__class__(res, synthesized=synthesized)
 
     def __str__(self):
         return "{value}".format(value=super().__str__())
@@ -43,17 +41,18 @@ class UntrustedInt(int):
 
 class UntrustedStr(str):
     """Subclass Python builtin str class with Splice specific attributes."""
-    def __new__(cls, *args, untrusted=True, synthesized=False, **kargs):
+    def __new__(cls, *args, synthesized=False, **kargs):
         self = super().__new__(cls, *args, **kargs)
-        self.untrusted = untrusted
-        self.synthesized = synthesized
+        self._synthesized = synthesized
         return self
 
-    def is_untrusted(self):
-        return self.untrusted
+    @property
+    def synthesized(self):
+        return self._synthesized
 
-    def is_synthesized(self):
-        return self.synthesized
+    @synthesized.setter
+    def synthesized(self, synthesized):
+        self.synthesized = synthesized
 
     # TODO: While overwriting __getattribute__ returns UntrustedStr
     #  type, the following code does not change untrusted and synthesized
@@ -93,11 +92,10 @@ class UntrustedStr(str):
 
     def __add__(self, value):
         res = super().__add__(value)
-        untrusted = self.untrusted or value.untrusted
         synthesized = self.synthesized or value.synthesized
         # Do not use self.__class__() if __getattribute__ above is defined
         # because __class__ will trigger __getattribute__
-        return self.__class__(res, untrusted=untrusted, synthesized=synthesized)
+        return self.__class__(res, synthesized=synthesized)
 
     def __str__(self):
         return "{value}".format(value=super().__str__())
@@ -108,12 +106,11 @@ class UntrustedStr(str):
 
 if __name__ == "__main__":
     str_1 = UntrustedStr("Hello ")
-    str_2 = UntrustedStr("World!")
-    str_2.synthesized = True
-    print("str_2 synthesized:{}".format(str_2.is_synthesized()))
+    str_2 = UntrustedStr("World!", synthesized=True)
+    print("str_2 synthesized:{}".format(str_2.synthesized))
     str_3 = str_1 + str_2
     print("str_3 type:{}".format(type(str_3)))
     str_4 = str_1.__add__(str_2)
     print("str_4: {}".format(str_4))
     print("str_4 type:{}".format(type(str_4)))
-    print("str_4 synthesized:{}".format(str_4.is_synthesized()))
+    print("str_4 synthesized:{}".format(str_4.synthesized))
