@@ -113,13 +113,19 @@ class UntrustedStr(str, Untrusted):
         """Add (+) method. Note that:
         * UntrustedStr + UntrustedStr -> UntrustedStr
         * UntrustedStr + str -> UntrustedStr
+        Use reverse add (__radd__) for:
+        * str + UntrustedStr -> UntrustedStr.
         """
-        # TODO: str + UntrustedStr -> str. Note that we
-        #  cannot use __radd__ like in UntrustedInt since
-        #  string addition is not commutative!
-
         res = super().__add__(value)
         # result is synthesized if at least one operand is synthesized
+        if value.__class__ is type(self):
+            synthesized = self.synthesized or value.synthesized
+        else:
+            synthesized = self.synthesized
+        return self.__class__(res, synthesized=synthesized)
+
+    def __radd__(self, value):
+        res = value.__add__(self)
         if value.__class__ is type(self):
             synthesized = self.synthesized or value.synthesized
         else:
@@ -183,23 +189,16 @@ if __name__ == "__main__":
     assert synthesized_str_2 == "Fake World!World!", "synthesized_str_2 should be 'Fake World!World!'," \
                                                      " but it is {}.".format(synthesized_str_2)
     assert synthesized_str_2.synthesized is True, "synthesized_str_2 should be synthesized."
-    untrusted_str_2 = base_str + untrusted_str
-    assert untrusted_str_2 == "Hello Untrusted World!", "untrusted_str_2 should be 'Hello Untrusted World!'," \
-                                                        " but it is {}.".format(untrusted_str_2)
-    # TODO: fix the sad case if possible
-    base_str_1 = base_str + untrusted_str
-    print("({base_str_type})'{base_str_value}' + ({untrusted_str_type})'{untrusted_str_value}' "
-          "= ({result_type})'{result_value}'".format(base_str_type=base_str.__class__,
-                                                     base_str_value=base_str,
-                                                     untrusted_str_type=untrusted_str.__class__,
-                                                     untrusted_str_value=untrusted_str,
-                                                     result_type=base_str_1.__class__,
-                                                     result_value=base_str_1))
-    base_str_2 = base_str + synthesized_str
-    print("({base_str_type})'{base_str_value}' + ({synthesized_str_type})'{synthesized_str_value}' "
-          "= ({result_type})'{result_value}'".format(base_str_type=base_str.__class__,
-                                                     base_str_value=base_str,
-                                                     synthesized_str_type=synthesized_str.__class__,
-                                                     synthesized_str_value=synthesized_str,
-                                                     result_type=base_str_1.__class__,
-                                                     result_value=base_str_1))
+    untrusted_str_3 = base_str + untrusted_str
+    assert untrusted_str_3 == "Hello Untrusted World!", "untrusted_str_3 should be 'Hello Untrusted World!'," \
+                                                        " but it is {}.".format(untrusted_str_3)
+    assert untrusted_str_3.synthesized is False, "untrusted_str_3 should not be synthesized."
+    synthesized_str_3 = base_str + synthesized_str
+    assert synthesized_str_3 == "Hello Fake World!", "synthesized_str_3 should be 'Hello Fake World'," \
+                                                     " but it is {}.".format(synthesized_str_3)
+    assert synthesized_str_3.synthesized is True, "synthesized_str_3 should be synthesized."
+    synthesized_str_4 = str_literal + synthesized_str
+    assert synthesized_str_4 == "World!Fake World!", "synthesized_str_4 should be 'World!Fake World'," \
+                                                     " but it is {}.".format(synthesized_str_4)
+    assert synthesized_str_4.synthesized is True, "synthesized_str_4 should be synthesized."
+
