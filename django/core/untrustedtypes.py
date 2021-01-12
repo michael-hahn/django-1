@@ -15,7 +15,7 @@ class Untrusted(object):
 
     @synthesized.setter
     def synthesized(self, synthesized):
-        self.synthesized = synthesized
+        self._synthesized = synthesized
 
 
 class UntrustedInt(int, Untrusted):
