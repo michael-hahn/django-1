@@ -75,16 +75,6 @@ class UntrustedInt(UntrustedMixin, int):
 
     __rsub__ = __sub__
 
-    def __eq__(self, value):
-        """Override to include the synthesized flag into comparison. Equality
-        fails if either int is synthesized, regardless of the value.
-
-        Because equality takes synthesis flag into consideration, when
-        compare integer value, one should always cast UntrustedInt to Int first."""
-        if isinstance(value, UntrustedInt):
-            return super().__eq__(value) and not self.synthesized and not value.synthesized
-        return super().__eq__(value) and not self.synthesized
-
     def __hash__(self):
         """Override hash function to use either our default
         hash or the user-provided hash function."""
@@ -154,16 +144,6 @@ class UntrustedStr(UntrustedMixin, UserString):
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
 
-    def __eq__(self, string):
-        """Override to include the synthesized flag into comparison.
-        Equality fails if either string is synthesized, regardless of data.
-
-        Because equality takes synthesis flag into consideration, when
-        compare string data, one should always cast UntrustedStr to str first."""
-        if isinstance(string, UntrustedStr):
-            return self.data == string.data and not self.synthesized and not string.synthesized
-        return self.data == string and not self.synthesized
-
 
 if __name__ == "__main__":
     # Test int
@@ -189,17 +169,17 @@ if __name__ == "__main__":
     assert type(untrusted_int_5) == type(untrusted_int_1), "untrusted_int_5 type is not UntrustedInt"
 
     synthesized_int_2 = synthesized_int_1 + untrusted_int_1
-    assert int(synthesized_int_2) == 27, "synthesized_int_2 should be 27, but it is {}.".format(synthesized_int_2)
+    assert synthesized_int_2 == 27, "synthesized_int_2 should be 27, but it is {}.".format(synthesized_int_2)
     assert synthesized_int_2.synthesized is True, "synthesized_int_2 should be synthesized."
     assert type(synthesized_int_2) == type(synthesized_int_1), "synthesized_int_2 type is not UntrustedInt"
 
     synthesized_int_3 = synthesized_int_1 + int_literal
-    assert int(synthesized_int_3) == 17, "synthesized_int_3 should be 17, but it is {}.".format(synthesized_int_3)
+    assert synthesized_int_3 == 17, "synthesized_int_3 should be 17, but it is {}.".format(synthesized_int_3)
     assert synthesized_int_3.synthesized is True, "synthesized_int_3 should be synthesized."
     assert type(synthesized_int_3) == type(synthesized_int_1), "synthesized_int_3 type is not UntrustedInt"
 
     synthesized_int_4 = synthesized_int_1 + base_int
-    assert int(synthesized_int_4) == 22, "synthesized_int_4 should be 22, but it is {}.".format(synthesized_int_4)
+    assert synthesized_int_4 == 22, "synthesized_int_4 should be 22, but it is {}.".format(synthesized_int_4)
     assert synthesized_int_4.synthesized is True, "synthesized_int_4 should be synthesized."
     assert type(synthesized_int_4) == type(synthesized_int_1), "synthesized_int_4 type is not UntrustedInt"
 
@@ -232,14 +212,14 @@ if __name__ == "__main__":
     assert type(untrusted_str_2) == type(untrusted_str), "untrusted_str_2 type is not UntrustedStr"
 
     synthesized_str_1 = synthesized_str + base_str
-    assert str(synthesized_str_1) == "Fake World!Hello ", "synthesized_str_1 should be 'Fake World!Hello'," \
-                                                          " but it is {}.".format(synthesized_str_1)
+    assert synthesized_str_1 == "Fake World!Hello ", "synthesized_str_1 should be 'Fake World!Hello'," \
+                                                     " but it is {}.".format(synthesized_str_1)
     assert synthesized_str_1.synthesized is True, "synthesized_str_1 should be synthesized."
     assert type(synthesized_str_1) == type(untrusted_str), "synthesized_str_1 type is not UntrustedStr"
 
     synthesized_str_2 = synthesized_str + str_literal
-    assert str(synthesized_str_2) == "Fake World!World!", "synthesized_str_2 should be 'Fake World!World!'," \
-                                                          " but it is {}.".format(synthesized_str_2)
+    assert synthesized_str_2 == "Fake World!World!", "synthesized_str_2 should be 'Fake World!World!'," \
+                                                     " but it is {}.".format(synthesized_str_2)
     assert synthesized_str_2.synthesized is True, "synthesized_str_2 should be synthesized."
     assert type(synthesized_str_2) == type(untrusted_str), "synthesized_str_2 type is not UntrustedStr"
 
@@ -250,14 +230,14 @@ if __name__ == "__main__":
     assert type(untrusted_str_3) == type(untrusted_str), "untrusted_str_3 type is not UntrustedStr"
 
     synthesized_str_3 = base_str + synthesized_str
-    assert str(synthesized_str_3) == "Hello Fake World!", "synthesized_str_3 should be 'Hello Fake World'," \
-                                                          " but it is {}.".format(synthesized_str_3)
+    assert synthesized_str_3 == "Hello Fake World!", "synthesized_str_3 should be 'Hello Fake World'," \
+                                                     " but it is {}.".format(synthesized_str_3)
     assert synthesized_str_3.synthesized is True, "synthesized_str_3 should be synthesized."
     assert type(synthesized_str_3) == type(untrusted_str), "synthesized_str_3 type is not UntrustedStr"
 
     synthesized_str_4 = str_literal + synthesized_str
-    assert str(synthesized_str_4) == "World!Fake World!", "synthesized_str_4 should be 'World!Fake World'," \
-                                                          " but it is {}.".format(synthesized_str_4)
+    assert synthesized_str_4 == "World!Fake World!", "synthesized_str_4 should be 'World!Fake World'," \
+                                                     " but it is {}.".format(synthesized_str_4)
     assert synthesized_str_4.synthesized is True, "synthesized_str_4 should be synthesized."
     assert type(synthesized_str_4) == type(untrusted_str), "synthesized_str_4 type is not UntrustedStr"
 
