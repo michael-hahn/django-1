@@ -68,34 +68,31 @@ class UntrustedInt(UntrustedMixin, int):
 
 
 class UntrustedStr(UntrustedMixin, UserString):
-    def __init__(self, seq, synthesized=False, custom_hash=None):
-        """Subclass collections module's UserString to create
-        a custom str class that behaves like Python's built-in
-        str but allows further customization. Use UntrustedMixin
-        to add the untrusted feature for the class. hash
-        parameter allows a developer to provide a custom hash
-        function. The hash function must take a list of bytes
-        and returns integer; each byte should represent the
-        character in string (in ASCII)."""
+    """Subclass collections module's UserString to create
+    a custom str class that behaves like Python's built-in
+    str but allows further customization. Use UntrustedMixin
+    to add the untrusted feature for the class."""
+    def __init__(self, seq, synthesized=False):
         super().__init__(synthesized, seq)
 
-        def default_hash(input_bytes):
-            """Default hash function if no hash
-            function is provided by the user."""
-            h = 0
-            for byte in input_bytes:
-                h = h * 31 + byte
-            return h
+    @staticmethod
+    def default_hash(input_bytes):
+        """Default hash function if no hash
+        function is provided by the user."""
+        h = 0
+        for byte in input_bytes:
+            h = h * 31 + byte
+        return h
 
-        self._hash = default_hash
-        if custom_hash:
-            self._hash = custom_hash
+    custom_hash = default_hash
 
-    @property
-    def hash(self):
-        """hash function is R/O. It is not good for program
-        integrity if we allow hash to be replaced mid-way."""
-        return self._hash
+    @classmethod
+    def set_hash(cls, new_hash_func):
+        """Allows a developer to provide a custom hash
+        function. The hash function must take a list of
+        bytes and returns an integer; each byte should
+        represent one character in string (in ASCII)."""
+        cls.custom_hash = new_hash_func
 
     def __add__(self, other):
         """Add (+) method. Note that:
@@ -117,10 +114,10 @@ class UntrustedStr(UntrustedMixin, UserString):
         return self.__class__(str(other) + self.data, self.synthesized)
 
     def __hash__(self):
-        """Overwrite UserStr hash function to use either
+        """Override UserStr hash function to use either
         the default or the user-provided hash function."""
         chars = bytes(self.data, 'ascii')
-        return self._hash(chars)
+        return type(self).custom_hash(chars)
 
 
 if __name__ == "__main__":
