@@ -119,6 +119,13 @@ class UntrustedStr(UntrustedMixin, UserString):
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
 
+    def __eq__(self, string):
+        """Override to include the synthesized flag into comparison.
+        Equality fails if either string is synthesized, regardless of data."""
+        if isinstance(string, UntrustedStr):
+            return self.data == string.data and not self.synthesized and not string.synthesized
+        return self.data == string and not self.synthesized
+
 
 if __name__ == "__main__":
     # Test int
