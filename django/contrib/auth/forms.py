@@ -18,6 +18,8 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.text import capfirst
 from django.utils.translation import gettext, gettext_lazy as _
 
+from django.core.untrustedtypes import UntrustedStr
+
 UserModel = get_user_model()
 
 
@@ -69,7 +71,7 @@ class ReadOnlyPasswordHashField(forms.Field):
 
 class UsernameField(forms.CharField):
     def to_python(self, value):
-        return unicodedata.normalize('NFKC', super().to_python(value))
+        return UntrustedStr(unicodedata.normalize('NFKC', str(super().to_python(value))))
 
     def widget_attrs(self, widget):
         return {
