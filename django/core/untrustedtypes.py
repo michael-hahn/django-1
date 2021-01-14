@@ -31,6 +31,23 @@ class UntrustedInt(UntrustedMixin, int):
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
+    @staticmethod
+    def default_hash(input_integer):
+        """Default hash function if no hash
+        function is provided by the user."""
+        return input_integer % (2**63 - 1)
+
+    custom_hash = default_hash
+
+    @classmethod
+    def set_hash(cls, new_hash_func):
+        """Allows a developer to provide a custom hash
+        function. The hash function must take an integer
+        and returns an integer.
+
+        Hash function must be Z3 friendly."""
+        cls.custom_hash = new_hash_func
+
     def __add__(self, value):
         """Add (+) method. Note that:
         * UntrustedInt + UntrustedInt -> UntrustedInt
@@ -68,6 +85,11 @@ class UntrustedInt(UntrustedMixin, int):
             return super().__eq__(value) and not self.synthesized and not value.synthesized
         return super().__eq__(value) and not self.synthesized
 
+    def __hash__(self):
+        """Override hash function to use either our default
+        hash or the user-provided hash function."""
+        return type(self).custom_hash(int(self))
+
     def __str__(self):
         return "{value}".format(value=super().__str__())
 
@@ -102,7 +124,9 @@ class UntrustedStr(UntrustedMixin, UserString):
         """Allows a developer to provide a custom hash
         function. The hash function must take a list of
         bytes and returns an integer; each byte should
-        represent one character in string (in ASCII)."""
+        represent one character in string (in ASCII).
+
+        Hash function must be Z3 friendly."""
         cls.custom_hash = new_hash_func
 
     def __add__(self, other):
