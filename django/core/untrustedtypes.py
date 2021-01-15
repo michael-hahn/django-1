@@ -73,7 +73,9 @@ class UntrustedInt(UntrustedMixin, int):
             synthesized = self.synthesized
         return self.__class__(res, synthesized=synthesized)
 
-    __rsub__ = __sub__
+    def __rsub__(self, value):
+        """Reverse subtract (-) method."""
+        return self.__class__(value.__sub__(int(self)), synthesized=self.synthesized)
 
     def __hash__(self):
         """Override hash function to use either our default
@@ -186,12 +188,27 @@ if __name__ == "__main__":
     untrusted_int_6 = base_int + untrusted_int_1
     assert untrusted_int_6 == 25, "untrusted_int_6 should be 25, but it is {}.".format(untrusted_int_6)
     assert untrusted_int_6.synthesized is False, "untrusted_int_6 should not be synthesized."
-    assert type(untrusted_int_6) == type(untrusted_int_6), "untrusted_int_6 type is not UntrustedInt"
+    assert type(untrusted_int_6) == type(untrusted_int_1), "untrusted_int_6 type is not UntrustedInt"
 
     untrusted_int_7 = int_literal + untrusted_int_1
     assert untrusted_int_7 == 20, "untrusted_int_7 should be 20, but it is {}.".format(untrusted_int_7)
     assert untrusted_int_7.synthesized is False, "untrusted_int_7 should not be synthesized."
-    assert type(untrusted_int_7) == type(untrusted_int_7), "untrusted_int_7 type is not UntrustedInt"
+    assert type(untrusted_int_7) == type(untrusted_int_1), "untrusted_int_7 type is not UntrustedInt"
+
+    untrusted_int_8 = untrusted_int_1 - base_int
+    assert untrusted_int_8 == 5, "untrusted_int_8 should be 5, but it is {}.".format(untrusted_int_8)
+    assert untrusted_int_8.synthesized is False, "untrusted_int_8 should not be synthesized."
+    assert type(untrusted_int_8) == type(untrusted_int_1), "untrusted_int_8 type is not UntrustedInt"
+
+    untrusted_int_9 = base_int - untrusted_int_1
+    assert untrusted_int_9 == -5, "untrusted_int_9 should be 5, but it is {}.".format(untrusted_int_9)
+    assert untrusted_int_9.synthesized is False, "untrusted_int_9 should not be synthesized."
+    assert type(untrusted_int_9) == type(untrusted_int_1), "untrusted_int_9 type is not UntrustedInt"
+
+    synthesized_int_5 = int_literal - synthesized_int_1
+    assert synthesized_int_5 == -7, "synthesized_int_5 should be -7, but it is {}.".format(synthesized_int_5)
+    assert synthesized_int_5.synthesized is True, "synthesized_int_5 should be synthesized."
+    assert type(synthesized_int_5) == type(synthesized_int_1), "synthesized_int_5 type is not UntrustedInt"
 
     # Test str
     base_str = str("Hello ")
