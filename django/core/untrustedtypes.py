@@ -1,5 +1,5 @@
 """
-Subclass builtins classes
+Untrusted classes
 """
 from collections import UserString
 
