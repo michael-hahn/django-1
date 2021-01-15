@@ -55,8 +55,10 @@ class UntrustedInt(UntrustedMixin, int):
         Use reverse add (__radd__) for:
         * int + UntrustedInt -> UntrustedInt."""
         res = super().__add__(value)
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
         # result is synthesized if at least one operand is synthesized
-        if value.__class__ is type(self):
+        if issubclass(type(value), UntrustedMixin):
             synthesized = self.synthesized or value.synthesized
         else:
             synthesized = self.synthesized
@@ -67,7 +69,9 @@ class UntrustedInt(UntrustedMixin, int):
     def __sub__(self, value):
         """Subtract (-) method."""
         res = super().__sub__(value)
-        if value.__class__ is type(self):
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
+        if issubclass(type(value), UntrustedMixin):
             synthesized = self.synthesized or value.synthesized
         else:
             synthesized = self.synthesized
@@ -75,7 +79,14 @@ class UntrustedInt(UntrustedMixin, int):
 
     def __rsub__(self, value):
         """Reverse subtract (-) method."""
-        return self.__class__(value.__sub__(int(self)), synthesized=self.synthesized)
+        res = value.__sub__(self)
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
+        if issubclass(type(value), UntrustedMixin):
+            synthesized = self.synthesized or value.synthesized
+        else:
+            synthesized = self.synthesized
+        return self.__class__(res, synthesized=synthesized)
 
     def __hash__(self):
         """Override hash function to use either our default
@@ -90,6 +101,57 @@ class UntrustedInt(UntrustedMixin, int):
     #  Same for other Untrusted classes!
     # def __repr__(self):
     #     return "{type}({value})".format(type=type(self).__name__, value=super().__repr__())
+
+
+class UntrustedFloat(UntrustedMixin, float):
+    """Subclass Python builtin float class and Untrusted Mixin.
+    Note that synthesized is a keyed parameter."""
+    def __new__(cls, x, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, x, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
+
+    def __add__(self, value):
+        """Add (+) method. Note that:
+        * UntrustedFloat + UntrustedFloat/UntrustedInt -> UntrustedFloat
+        * UntrustedFloat + int/Float -> UntrustedFloat
+        Use reverse add (__radd__) for:
+        * int/float + UntrustedFloat -> UntrustedFloat."""
+        res = super().__add__(value)
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
+        # result is synthesized if at least one operand is synthesized
+        if issubclass(type(value), UntrustedMixin):
+            synthesized = self.synthesized or value.synthesized
+        else:
+            synthesized = self.synthesized
+        return self.__class__(res, synthesized=synthesized)
+
+    __radd__ = __add__
+
+    def __sub__(self, value):
+        """Subtract (-) method."""
+        res = super().__sub__(value)
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
+        if issubclass(type(value), UntrustedMixin):
+            synthesized = self.synthesized or value.synthesized
+        else:
+            synthesized = self.synthesized
+        return self.__class__(res, synthesized=synthesized)
+
+    def __rsub__(self, value):
+        """Reverse subtract (-) method."""
+        res = float(value).__sub__(self)
+        if isinstance(res, type(NotImplemented)):
+            return NotImplemented
+        if issubclass(type(value), UntrustedMixin):
+            synthesized = self.synthesized or value.synthesized
+        else:
+            synthesized = self.synthesized
+        return self.__class__(res, synthesized=synthesized)
 
 
 class UntrustedStr(UntrustedMixin, UserString):
@@ -133,11 +195,17 @@ class UntrustedStr(UntrustedMixin, UserString):
             return self.__class__(self.data + other.data, synthesized=synthesized)
         elif isinstance(other, str):
             return self.__class__(self.data + other, synthesized=self.synthesized)
+        elif issubclass(type(other), UntrustedMixin):
+            synthesized = self.synthesized or other.synthesized
+            return self.__class__(self.data + str(other), synthesized=synthesized)
         return self.__class__(self.data + str(other), synthesized=self.synthesized)
 
     def __radd__(self, other):
         if isinstance(other, str):
             return self.__class__(other + self.data, synthesized=self.synthesized)
+        elif issubclass(type(other), UntrustedMixin):
+            synthesized = self.synthesized or other.synthesized
+            return self.__class__(str(other) + self.data, synthesized=synthesized)
         return self.__class__(str(other) + self.data, synthesized=self.synthesized)
 
     def __hash__(self):
@@ -201,7 +269,7 @@ if __name__ == "__main__":
     assert type(untrusted_int_8) == type(untrusted_int_1), "untrusted_int_8 type is not UntrustedInt"
 
     untrusted_int_9 = base_int - untrusted_int_1
-    assert untrusted_int_9 == -5, "untrusted_int_9 should be 5, but it is {}.".format(untrusted_int_9)
+    assert untrusted_int_9 == -5, "untrusted_int_9 should be -5, but it is {}.".format(untrusted_int_9)
     assert untrusted_int_9.synthesized is False, "untrusted_int_9 should not be synthesized."
     assert type(untrusted_int_9) == type(untrusted_int_1), "untrusted_int_9 type is not UntrustedInt"
 
@@ -209,6 +277,47 @@ if __name__ == "__main__":
     assert synthesized_int_5 == -7, "synthesized_int_5 should be -7, but it is {}.".format(synthesized_int_5)
     assert synthesized_int_5.synthesized is True, "synthesized_int_5 should be synthesized."
     assert type(synthesized_int_5) == type(synthesized_int_1), "synthesized_int_5 type is not UntrustedInt"
+
+    # Test float
+    base_float = float(1.5)
+    float_literal = 5.5
+    untrusted_float_1 = UntrustedFloat(10.5)
+    synthesized_float_1 = UntrustedFloat(12.5, synthesized=True)
+
+    untrusted_float_2 = untrusted_float_1 + base_float
+    assert untrusted_float_2 == 12, "untrusted_float_2 should be 12, but it is {}.".format(untrusted_float_2)
+    assert untrusted_float_2.synthesized is False, "untrusted_float_2 should not be synthesized."
+    assert type(untrusted_float_2) == type(untrusted_float_1), "untrusted_float_2 type is not UntrustedFloat"
+
+    untrusted_float_3 = base_float + untrusted_float_1
+    assert untrusted_float_3 == 12, "untrusted_float_3 should be 12, but it is {}.".format(untrusted_float_3)
+    assert untrusted_float_3.synthesized is False, "untrusted_float_3 should not be synthesized."
+    assert type(untrusted_float_3) == type(untrusted_float_1), "untrusted_float_3 type is not UntrustedFloat"
+
+    untrusted_float_4 = base_int + untrusted_float_1
+    assert untrusted_float_4 == 20.5, "untrusted_float_4 should be 20.5, but it is {}.".format(untrusted_float_4)
+    assert untrusted_float_4.synthesized is False, "untrusted_float_4 should not be synthesized."
+    assert type(untrusted_float_4) == type(untrusted_float_1), "untrusted_float_4 type is not UntrustedFloat"
+
+    untrusted_float_5 = base_float - untrusted_float_1
+    assert untrusted_float_5 == -9, "untrusted_float_5 should be -9, but it is {}.".format(untrusted_float_5)
+    assert untrusted_float_5.synthesized is False, "untrusted_float_5 should not be synthesized."
+    assert type(untrusted_float_5) == type(untrusted_float_1), "untrusted_float_5 type is not UntrustedFloat"
+
+    untrusted_float_6 = base_int - untrusted_float_1
+    assert untrusted_float_6 == -0.5, "untrusted_float_6 should be -0.5, but it is {}.".format(untrusted_float_6)
+    assert untrusted_float_6.synthesized is False, "untrusted_float_6 should not be synthesized."
+    assert type(untrusted_float_6) == type(untrusted_float_1), "untrusted_float_6 type is not UntrustedFloat"
+
+    untrusted_float_7 = untrusted_int_1 - untrusted_float_1
+    assert untrusted_float_7 == 4.5, "untrusted_float_7 should be 4.5, but it is {}.".format(untrusted_float_7)
+    assert untrusted_float_7.synthesized is False, "untrusted_float_7 should not be synthesized."
+    assert type(untrusted_float_7) == type(untrusted_float_1), "untrusted_float_7 type is not UntrustedFloat"
+
+    untrusted_float_8 = untrusted_int_1 + untrusted_float_1 + base_float
+    assert untrusted_float_8 == 27, "untrusted_float_8 should be 27, but it is {}.".format(untrusted_float_8)
+    assert untrusted_float_8.synthesized is False, "untrusted_float_8 should not be synthesized."
+    assert type(untrusted_float_8) == type(untrusted_float_1), "untrusted_float_8 type is not UntrustedFloat"
 
     # Test str
     base_str = str("Hello ")
@@ -257,4 +366,3 @@ if __name__ == "__main__":
                                                      " but it is {}.".format(synthesized_str_4)
     assert synthesized_str_4.synthesized is True, "synthesized_str_4 should be synthesized."
     assert type(synthesized_str_4) == type(untrusted_str), "synthesized_str_4 type is not UntrustedStr"
-
