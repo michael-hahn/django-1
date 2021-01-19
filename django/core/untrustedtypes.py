@@ -294,6 +294,16 @@ def untrusted_int_test():
     assert synthesized_int_7.synthesized is True, "synthesized_int_7 should be synthesized."
     assert type(synthesized_int_7) == type(synthesized_int_1), "synthesized_int_7 type is not UntrustedInt"
 
+    synthesized_int_8 = synthesized_int_1 / int_literal
+    assert synthesized_int_8 == 2.4, "synthesized_int_8 should be 2.4, but it is {}.".format(synthesized_int_8)
+    assert synthesized_int_8.synthesized is True, "synthesized_int_8 should be synthesized."
+    assert type(synthesized_int_8) == UntrustedFloat, "synthesized_int_8 type is not UntrustedFloat"
+
+    synthesized_int_9 = int_literal / synthesized_int_1
+    assert synthesized_int_9 == 5/12, "synthesized_int_9 should be 5/12, but it is {}.".format(synthesized_int_9)
+    assert synthesized_int_9.synthesized is True, "synthesized_int_9 should be synthesized."
+    assert type(synthesized_int_9) == UntrustedFloat, "synthesized_int_9 type is not UntrustedFloat"
+
 
 def untrusted_float_test():
     base_int = int("A", base=16)
@@ -337,6 +347,12 @@ def untrusted_float_test():
     assert untrusted_float_8 == 27, "untrusted_float_8 should be 27, but it is {}.".format(untrusted_float_8)
     assert untrusted_float_8.synthesized is False, "untrusted_float_8 should not be synthesized."
     assert type(untrusted_float_8) == type(untrusted_float_1), "untrusted_float_8 type is not UntrustedFloat"
+
+    synthesized_float_2 = float_literal * synthesized_float_1
+    assert synthesized_float_2 == 68.75, "synthesized_float_2 should be 68.75, " \
+                                         "but it is {}.".format(synthesized_float_2)
+    assert synthesized_float_2.synthesized is True, "synthesized_float_2 should be synthesized."
+    assert type(synthesized_float_2) == type(untrusted_float_1), "synthesized_float_2 type is not UntrustedFloat"
 
 
 def untrusted_str_test():
