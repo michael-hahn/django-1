@@ -4,6 +4,94 @@ Untrusted classes
 from collections import UserString
 
 
+def add_synthesis(func, *, cls, base):
+    """A function decorator that decorates func.
+    cls is expected to be of an UntrustedX type.
+    For example, cls might be UntrustedInt. base
+    (if not None) is expected to be the base case
+    from which cls is derived. For example, base
+    might be int. This function handled various
+    types of funcs in cls."""
+    def wrapper(*args, **kwargs):
+        res = func(*args, **kwargs)
+        if res is NotImplemented:
+            return res
+        # Set synthesized flag if any args/kwargs sets the flag
+        synthesized = False
+        for arg in args:
+            if issubclass(type(arg), UntrustedMixin):
+                synthesized = synthesized or arg.synthesized
+        for key, value in kwargs.items():
+            if issubclass(type(value), UntrustedMixin):
+                synthesized = synthesized or value.synthesized
+        # TODO: This might need to be modified later!
+        if type(res) == base:
+            # Only the result of the base type is casted to UntrustedX type
+            return cls(res, synthesized=synthesized)
+        elif type(res) == cls:
+            # Sometimes inheritances use self.__class__() to create UntrustedX
+            # type in base class but synthesized flag might not be set correctly
+            res.synthesized = synthesized
+            return res
+        else:
+            return res
+    return wrapper
+
+
+def add_synthesis_to_func(cls, base):
+    """A class decorator that decorates all functions in cls
+    so that they are synthesis-aware. If cls is a subclass of
+    a "base" class (passed by as a parameter by UntrustedX
+    subclasses), then we want functions in base class to be
+    synthesis-aware as well. "base" can be None, in which case
+    we would only decorate "cls" functions.
+
+    Important note: Any cls function to be decorated must
+    start with either "synthesis_" or "_synthesis_" (for protected
+    methods), while base class functions have no such restriction
+    (since it is possible that developers have no control over the
+    base class). Using this convention, developers can prevent
+    base class functions from being decorated by overriding the
+    function (and just calling base class function). If, for example,
+    the developer needs to override a dunder function, and the
+    overridden function needs to be decorated, they should first
+    implement a helper function '_synthesize__dunder__' and then
+    call the helper function in the dunder function. As such,
+    _synthesize__dunder__ will be decorated (and therefore the
+    calling dunder function)."""
+    # First handle all functions in cls class
+    for key, value in cls.__dict__.items():
+        # Only callable functions are decorated
+        if not callable(value):
+            continue
+        if key.startswith("synthesis_") or key.startswith("_synthesis_"):
+            setattr(cls, key, add_synthesis(value, cls=cls, base=base))
+    # Handle base class functions if exists. Base class is
+    # unlikely to follow our synthesis naming convention.
+    # However, some dunder methods (as in excluded_funcs)
+    # clearly should *not* be decorated. Some can be more subtle:
+    # * __int__: This dunder method is called during int().
+    #            If int() is called, we should not decorate it
+    #            but actually returns an int typed value.
+    excluded_funcs = ['__dict__', '__module__', '__doc__', '__repr__',
+                      '__getattribute__', '__str__', '__new__', '__format__',
+                      '__int__']
+    if base is not None:
+        for key, value in base.__dict__.items():
+            # Only callable functions that are not handled by cls
+            if key in cls.__dict__ or not callable(value):
+                continue
+            # Some dunder methods clearly should not be decorated
+            if key in excluded_funcs:
+                continue
+            # Delegate add_synthesis() to handle other cases
+            # since there is not much convention we can specify.
+            # Note that it is possible add_synthesis() can just
+            # return the same function (value) with no changes.
+            setattr(cls, key, add_synthesis(value, cls=cls, base=base))
+    return cls
+
+
 class UntrustedMixin(object):
     """A Mixin class for adding the Untrusted feature to other classes."""
     def __init__(self, synthesized=False, *args, **kwargs):
@@ -11,6 +99,23 @@ class UntrustedMixin(object):
         # Forwards all unused arguments to other base classes down the MRO line.
         self._synthesized = synthesized
         super().__init__(*args, **kwargs)
+
+    def __init_subclass__(cls, *, base=None, **kwargs):
+        """Whenever a class inherits from this, this function is called on that class,
+        so that we can change the behavior of subclasses. This is closely related to
+        class decorators, but where class decorators only affect the specific class
+        they’re applied to, __init_subclass__ solely applies to future subclasses of
+        the class defining the method.
+
+        Here we use both __init_subclass__ and class decorator, so that a subclass
+        of UntrustedMixin and its subclasses can be decorated.
+
+        TODO: multiple-inheritance might not work correctly with "base", see:
+        https://stackoverflow.com/questions/55183288/inheriting-init-subclass-parameters
+        However, inheriting from UntrustedX class is discouraged. In this case,
+        we can also simply directly use class decorators instead of __init_subclass__()."""
+        super().__init_subclass__(**kwargs)
+        add_synthesis_to_func(cls, base)
 
     @property
     def synthesized(self):
@@ -21,9 +126,10 @@ class UntrustedMixin(object):
         self._synthesized = synthesized
 
 
-class UntrustedInt(UntrustedMixin, int):
+class UntrustedInt(UntrustedMixin, int, base=int):
     """Subclass Python builtin int class and Untrusted Mixin.
-    Note that synthesized is a keyed parameter."""
+    Note that synthesized is a keyed parameter. The "base"
+    key is used as the argument to UntrustedMixin's __init_subclass__."""
     def __new__(cls, x, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, x, *args, **kwargs)
         return self
@@ -48,46 +154,6 @@ class UntrustedInt(UntrustedMixin, int):
         Hash function must be Z3 friendly."""
         cls.custom_hash = new_hash_func
 
-    def __add__(self, value):
-        """Add (+) method. Note that:
-        * UntrustedInt + UntrustedInt -> UntrustedInt
-        * UntrustedInt + int -> UntrustedInt
-        Use reverse add (__radd__) for:
-        * int + UntrustedInt -> UntrustedInt."""
-        res = super().__add__(value)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        # result is synthesized if at least one operand is synthesized
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
-
-    __radd__ = __add__
-
-    def __sub__(self, value):
-        """Subtract (-) method."""
-        res = super().__sub__(value)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
-
-    def __rsub__(self, value):
-        """Reverse subtract (-) method."""
-        res = value.__sub__(self)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
-
     def __hash__(self):
         """Override hash function to use either our default
         hash or the user-provided hash function."""
@@ -96,16 +162,11 @@ class UntrustedInt(UntrustedMixin, int):
     def __str__(self):
         return "{value}".format(value=super().__str__())
 
-    # TODO: Adding additional information like "type" breaks z3,
-    #  so we don't overwrite __repr__ until we know why it breaks.
-    #  Same for other Untrusted classes!
-    # def __repr__(self):
-    #     return "{type}({value})".format(type=type(self).__name__, value=super().__repr__())
 
-
-class UntrustedFloat(UntrustedMixin, float):
+class UntrustedFloat(UntrustedMixin, float, base=float):
     """Subclass Python builtin float class and Untrusted Mixin.
-    Note that synthesized is a keyed parameter."""
+    Note that synthesized is a keyed parameter. The "base" key
+    is used as the argument to UntrustedMixin's __init_subclass__."""
     def __new__(cls, x, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, x, *args, **kwargs)
         return self
@@ -113,52 +174,13 @@ class UntrustedFloat(UntrustedMixin, float):
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
-    def __add__(self, value):
-        """Add (+) method. Note that:
-        * UntrustedFloat + UntrustedFloat/UntrustedInt -> UntrustedFloat
-        * UntrustedFloat + int/Float -> UntrustedFloat
-        Use reverse add (__radd__) for:
-        * int/float + UntrustedFloat -> UntrustedFloat."""
-        res = super().__add__(value)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        # result is synthesized if at least one operand is synthesized
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
 
-    __radd__ = __add__
-
-    def __sub__(self, value):
-        """Subtract (-) method."""
-        res = super().__sub__(value)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
-
-    def __rsub__(self, value):
-        """Reverse subtract (-) method."""
-        res = float(value).__sub__(self)
-        if isinstance(res, type(NotImplemented)):
-            return NotImplemented
-        if issubclass(type(value), UntrustedMixin):
-            synthesized = self.synthesized or value.synthesized
-        else:
-            synthesized = self.synthesized
-        return self.__class__(res, synthesized=synthesized)
-
-
-class UntrustedStr(UntrustedMixin, UserString):
+class UntrustedStr(UntrustedMixin, UserString, base=UserString):
     """Subclass collections module's UserString to create
     a custom str class that behaves like Python's built-in
     str but allows further customization. Use UntrustedMixin
-    to add the untrusted feature for the class."""
+    to add the untrusted feature for the class. The "base" key
+    is used as the argument to UntrustedMixin's __init_subclass__."""
     def __init__(self, seq, *, synthesized=False):
         super().__init__(synthesized, seq)
 
@@ -182,31 +204,6 @@ class UntrustedStr(UntrustedMixin, UserString):
 
         Hash function must be Z3 friendly."""
         cls.custom_hash = new_hash_func
-
-    def __add__(self, other):
-        """Add (+) method. Note that:
-        * UntrustedStr + UntrustedStr -> UntrustedStr
-        * UntrustedStr + str -> UntrustedStr
-        Use reverse add (__radd__) for:
-        * str + UntrustedStr -> UntrustedStr.
-        """
-        if isinstance(other, UntrustedStr):
-            synthesized = self.synthesized or other.synthesized
-            return self.__class__(self.data + other.data, synthesized=synthesized)
-        elif isinstance(other, str):
-            return self.__class__(self.data + other, synthesized=self.synthesized)
-        elif issubclass(type(other), UntrustedMixin):
-            synthesized = self.synthesized or other.synthesized
-            return self.__class__(self.data + str(other), synthesized=synthesized)
-        return self.__class__(self.data + str(other), synthesized=self.synthesized)
-
-    def __radd__(self, other):
-        if isinstance(other, str):
-            return self.__class__(other + self.data, synthesized=self.synthesized)
-        elif issubclass(type(other), UntrustedMixin):
-            synthesized = self.synthesized or other.synthesized
-            return self.__class__(str(other) + self.data, synthesized=synthesized)
-        return self.__class__(str(other) + self.data, synthesized=self.synthesized)
 
     def __hash__(self):
         """Override UserStr hash function to use either
@@ -324,7 +321,7 @@ if __name__ == "__main__":
     str_literal = "World!"
     untrusted_str = UntrustedStr("Untrusted World!")
     synthesized_str = UntrustedStr("Fake World!", synthesized=True)
-    # # Some expected test cases
+    # Some expected test cases
     untrusted_str_1 = untrusted_str + base_str
     assert untrusted_str_1 == "Untrusted World!Hello ", "untrusted_str_1 should be 'Untrusted World!Hello'," \
                                                         " but it is {}.".format(untrusted_str_1)
