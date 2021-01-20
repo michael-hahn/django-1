@@ -2,6 +2,55 @@
 Untrusted classes
 """
 from collections import UserString
+from decimal import Decimal
+
+import inspect
+import functools
+
+
+# DEBUGGING FUNCTIONS #################################################################################################
+def synthesis_debug(func):
+    """A function decorator used to decorate modified
+    functions in the original Django framework for
+    debugging our imposed synthesis framework."""
+
+    def get_class(method):
+        """Get the class that defines the called function/method.
+        It is unlikely that we encounter all cases defined below,
+        but just for completeness.
+        Ref: https://stackoverflow.com/a/25959545/9632613."""
+        # If the method is a partial function
+        if isinstance(method, functools.partial):
+            return get_class(method.func)
+        # If it is a method (bounded to a class)
+        if inspect.ismethod(method) or \
+            (inspect.isbuiltin(method) and
+             getattr(method, '__self__', None) is not None and
+             getattr(method.__self__, '__class__', None)):
+            for cls in inspect.getmro(method.__self__.__class__):
+                if method.__name__ in cls.__dict__:
+                    return cls
+            method = getattr(method, '__func__', method)  # fallback to __qualname__ parsing
+        if inspect.isfunction(method):
+            cls = getattr(inspect.getmodule(method),
+                          method.__qualname__.split('.<locals>', 1)[0].rsplit('.', 1)[0], None)
+            if isinstance(cls, type):
+                return cls
+        return getattr(method, '__objclass__', None)  # handle special descriptor objects
+
+    def wrapper(*args, **kwargs):
+        # Get the name of the function
+        func_name = func.__name__
+        # Get the class that defines the called function (method)
+        cls_name = get_class(func).__name__
+        res = func(*args, **kwargs)
+        res_type = type(res).__name__
+        print("{func} (in class: {cls}) -> ({type}) {res}".format(func=func_name, cls=cls_name,
+                                                                  type=res_type, res=res))
+        return res
+
+    return wrapper
+#######################################################################################################################
 
 
 def add_synthesis(func):
@@ -9,6 +58,7 @@ def add_synthesis(func):
     This decorator makes an UntrustedX class inherit
     all its base (non-untrusted) class functions
     and return Untrusted values."""
+
     def wrapper(*args, **kwargs):
         res = func(*args, **kwargs)
         if res is NotImplemented:
@@ -36,6 +86,8 @@ def add_synthesis(func):
             return UntrustedInt(res, synthesized=synthesized)
         elif isinstance(res, float):
             return UntrustedFloat(res, synthesized=synthesized)
+        elif isinstance(res, Decimal):
+            return UntrustedDecimal(res, synthesized=synthesized)
         elif isinstance(res, str) or isinstance(res, UserString):
             return UntrustedStr(res, synthesized=synthesized)
         #####################################################
@@ -112,6 +164,7 @@ class UntrustedMixin(object):
 
     Important note: for __init_subclass__'s add_synthesis_to_func() to work
     correct, UntrustedMixin must used as the *first* parent class in a subclass."""
+
     def __init__(self, synthesized=False, *args, **kwargs):
         """A synthesized flag to id if a value is synthesized."""
         # Forwards all unused arguments to other base classes down the MRO line.
@@ -153,7 +206,7 @@ class UntrustedInt(UntrustedMixin, int):
     def default_hash(input_integer):
         """Default hash function if no hash
         function is provided by the user."""
-        return input_integer % (2**63 - 1)
+        return input_integer % (2 ** 63 - 1)
 
     custom_hash = default_hash
 
@@ -176,10 +229,20 @@ class UntrustedInt(UntrustedMixin, int):
 
 
 class UntrustedFloat(UntrustedMixin, float):
-    """Subclass Python builtin float class and Untrusted Mixin.
-    Note that synthesized is a keyed parameter."""
+    """Subclass Python builtin float class and Untrusted Mixin."""
     def __new__(cls, x, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, x, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
+
+
+class UntrustedDecimal(UntrustedMixin, Decimal):
+    """Subclass Python decimal module's Decimal class and Untrusted Mixin.
+    Decimal is immutable, so we should override __new__ and not just __init__."""
+    def __new__(cls, value="0", context=None, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, value, context, *args, **kwargs)
         return self
 
     def __init__(self, *args, synthesized=False, **kwargs):
@@ -300,7 +363,7 @@ def untrusted_int_test():
     assert type(synthesized_int_8) == UntrustedFloat, "synthesized_int_8 type is not UntrustedFloat"
 
     synthesized_int_9 = int_literal / synthesized_int_1
-    assert synthesized_int_9 == 5/12, "synthesized_int_9 should be 5/12, but it is {}.".format(synthesized_int_9)
+    assert synthesized_int_9 == 5 / 12, "synthesized_int_9 should be 5/12, but it is {}.".format(synthesized_int_9)
     assert synthesized_int_9.synthesized is True, "synthesized_int_9 should be synthesized."
     assert type(synthesized_int_9) == UntrustedFloat, "synthesized_int_9 type is not UntrustedFloat"
 
@@ -355,6 +418,48 @@ def untrusted_float_test():
     assert type(synthesized_float_2) == type(untrusted_float_1), "synthesized_float_2 type is not UntrustedFloat"
 
 
+def untrusted_decimal_test():
+    base_decimal = Decimal('3.14')
+    # Make sure UntrustedDecimal can take all forms acceptable by Decimal
+    untrusted_decimal_1 = UntrustedDecimal('3.14')              # string input
+    untrusted_decimal_2 = UntrustedDecimal((0, (3, 1, 4), -2))  # tuple (sign, digit_tuple, exponent)
+    assert untrusted_decimal_2 == Decimal((0, (3, 1, 4), -2)), "untrusted_decimal_2 should be 3.14, " \
+                                                               "but it is {}".format(untrusted_decimal_2)
+    assert type(untrusted_decimal_2) is UntrustedDecimal, "untrusted_decimal_2 type is not UntrustedDecimal"
+    untrusted_decimal_3 = UntrustedDecimal(Decimal(314))        # another decimal instance
+    assert untrusted_decimal_3 == Decimal(Decimal(314)), "untrusted_decimal_3 should be 314, " \
+                                                         "but it is {}".format(untrusted_decimal_3)
+    assert type(untrusted_decimal_3) is UntrustedDecimal, "untrusted_decimal_3 type is not UntrustedDecimal"
+    untrusted_decimal_4 = UntrustedDecimal('  3.14 \n')         # leading and trailing whitespace is okay
+    assert untrusted_decimal_4 == Decimal('  3.14 \n'), "untrusted_decimal_4 should be 3.14, " \
+                                                        "but it is {}".format(untrusted_decimal_4)
+    assert type(untrusted_decimal_4) is UntrustedDecimal, "untrusted_decimal_4 type is not UntrustedDecimal"
+    untrusted_decimal_5 = UntrustedDecimal(314)                 # int
+    assert untrusted_decimal_5 == Decimal(314), "untrusted_decimal_5 should be 314, " \
+                                                "but it is {}".format(untrusted_decimal_5)
+    assert type(untrusted_decimal_5) is UntrustedDecimal, "untrusted_decimal_5 type is not UntrustedDecimal"
+    synthesized_decimal_1 = UntrustedDecimal('3.14', synthesized=True)
+
+    untrusted_decimal_6 = base_decimal + untrusted_decimal_1
+    assert untrusted_decimal_6 == base_decimal + base_decimal, "untrusted_decimal_6 should be 6.28, " \
+                                                               "but it is {}.".format(untrusted_decimal_6)
+    assert untrusted_decimal_6.synthesized is False, "untrusted_decimal_6 should not be synthesized."
+    assert type(untrusted_decimal_6) == type(untrusted_decimal_1), "untrusted_decimal_6 type is not UntrustedDecimal"
+
+    untrusted_decimal_7 = base_decimal * untrusted_decimal_1
+    assert untrusted_decimal_7 == base_decimal * base_decimal, "untrusted_decimal_7 should be 9.8596, " \
+                                                               "but it is {}.".format(untrusted_decimal_6)
+    assert untrusted_decimal_7.synthesized is False, "untrusted_decimal_7 should not be synthesized."
+    assert type(untrusted_decimal_7) == type(untrusted_decimal_1), "untrusted_decimal_7 type is not UntrustedDecimal"
+
+    synthesized_decimal_2 = base_decimal * synthesized_decimal_1
+    assert synthesized_decimal_2 == base_decimal * base_decimal, "synthesized_decimal_2 should be 9.8596, " \
+                                                                 "but it is {}.".format(untrusted_decimal_6)
+    assert synthesized_decimal_2.synthesized is True, "synthesized_decimal_2 should be synthesized."
+    assert type(synthesized_decimal_2) == type(untrusted_decimal_1), \
+        "synthesized_decimal_2 type is not UntrustedDecimal"
+
+
 def untrusted_str_test():
     base_str = str("Hello ")
     str_literal = "World!"
@@ -407,4 +512,5 @@ def untrusted_str_test():
 if __name__ == "__main__":
     untrusted_int_test()
     untrusted_float_test()
+    untrusted_decimal_test()
     untrusted_str_test()
