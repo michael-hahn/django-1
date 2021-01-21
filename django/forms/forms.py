@@ -16,6 +16,8 @@ from django.utils.translation import gettext as _
 
 from .renderers import get_default_renderer
 
+from django.core.untrustedtypes import UntrustedMixin, synthesis_debug
+
 __all__ = ('BaseForm', 'Form')
 
 
@@ -406,12 +408,30 @@ class BaseForm:
             if cleaned_data is not None:
                 self.cleaned_data = cleaned_data
 
+    @synthesis_debug
     def _post_clean(self):
         """
         An internal hook for performing additional cleaning after form cleaning
-        is complete. Used for model validation in model forms.
+        is complete.
+
+        In a regular form, this step is to check that all data in cleaned_data
+        is of Untrusted types and then convert them into regular types.
         """
-        pass
+        # Accumulate errors to call self.add_error() since
+        # self.add_error() modifies self.cleaned_data and
+        # therefore cannot be called during the iteration.
+        for name, value in self.cleaned_data.items():
+            if not isinstance(value, UntrustedMixin):
+                raise ValidationError(_("{name} has value {value} of trusted type {type}'"
+                                        .format(name=name, value=value, type=type(value))))
+            else:
+                # IMPORTANT NOTE ###############################################
+                # TODO: We assume that the trusted class is the last base class
+                #  of the corresponding Untrusted type, but this assumption may
+                #  change later. Perhaps a better conversion approach is needed.
+                ################################################################
+                trusted_class = type(value).__bases__[-1]
+                self.cleaned_data[name] = trusted_class(value)
 
     def clean(self):
         """
