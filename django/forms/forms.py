@@ -16,7 +16,7 @@ from django.utils.translation import gettext as _
 
 from .renderers import get_default_renderer
 
-from django.core.untrustedtypes import UntrustedMixin, synthesis_debug
+from django.splice.untrustedtypes import UntrustedMixin, synthesis_debug
 
 __all__ = ('BaseForm', 'Form')
 

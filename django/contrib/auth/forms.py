@@ -18,7 +18,7 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.text import capfirst
 from django.utils.translation import gettext, gettext_lazy as _
 
-from django.core.untrustedtypes import UntrustedStr
+from django.splice.untrustedtypes import UntrustedStr
 
 UserModel = get_user_model()
 

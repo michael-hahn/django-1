@@ -32,7 +32,7 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.core.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedDecimal, synthesis_debug
+from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedDecimal, synthesis_debug
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
