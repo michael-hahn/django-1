@@ -210,6 +210,18 @@ class UntrustedMixin(object):
         else:
             return super().__float__()
 
+    # TODO: While str() calls __str__, so does print(). Therefore, while it makes sense
+    #  to stop str() from conversion if input is synthesized, we cannot use it until we
+    #  remove all print() statements on synthesized values.
+    def __str__(self):
+        """Whenever str() is called on an untrusted object for conversion, check
+        the synthesized flag before conversion. This is safe conversion but
+        conversion may still fail if the input to str() cannot be converted to a str."""
+        if self.synthesized:
+            raise RuntimeError("cannot convert a synthesized value to a trusted str value")
+        else:
+            return super().__str__()
+
     @property
     def synthesized(self):
         return self._synthesized
@@ -250,9 +262,6 @@ class UntrustedInt(UntrustedMixin, int):
         """Override hash function to use either our default
         hash or the user-provided hash function."""
         return type(self).custom_hash(int(self))
-
-    def __str__(self):
-        return "{value}".format(value=super().__str__())
 
 
 class UntrustedFloat(UntrustedMixin, float):
@@ -398,28 +407,36 @@ def untrusted_int_test():
     try:
         converted_int_1 = int(synthesized_int_6)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_int_6,
-                                      error=e))
+        print("60 is synthesized, converting it to int results in "
+              "error: {error}".format(error=e))
 
     converted_int_2 = int(untrusted_int_9)
     assert converted_int_2 == untrusted_int_9, "converted_int_2 should be -5, but it is {}.".format(converted_int_2)
     assert type(converted_int_2) == int, "converted_int_2 type is not int"
 
-    int_1 = int(base_int)
-    assert int_1 == base_int, "int_1 should be 10, but it is {}.".format(int_1)
-    assert type(int_1) == int, "int_1 type is not int"
+    converted_int_3 = int(base_int)
+    assert converted_int_3 == base_int, "converted_int_3 should be 10, but it is {}.".format(converted_int_3)
+    assert type(converted_int_3) == int, "converted_int_3 type is not int"
 
     try:
-        converted_float_1 = int(synthesized_int_6)
+        converted_float_1 = float(synthesized_int_6)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_int_6,
-                                      error=e))
+        print("60 is synthesized, converting it to float results in "
+              "error: {error}".format(error=e))
 
     converted_float_2 = float(untrusted_int_9)
     assert converted_float_2 == -5, "converted_float_2 should be -5, but it is {}.".format(converted_float_2)
     assert type(converted_float_2) == float, "converted_float_2 type is not float"
+
+    converted_str_1 = str(base_int)
+    assert converted_str_1 == '10', "converted_str_1 should be '10', but it is {}.".format(converted_str_1)
+    assert type(converted_str_1) == str, "converted_str_1 type is not str"
+
+    try:
+        converted_str_2 = str(synthesized_int_6)
+    except RuntimeError as e:
+        print("60 is synthesized, converting it to str results in "
+              "error: {error}".format(error=e))
 
 
 def untrusted_float_test():
@@ -479,22 +496,30 @@ def untrusted_float_test():
 
     synthesized_float_3 = UntrustedFloat(10, synthesized=True)
     try:
-        int_2 = int(synthesized_float_3)
+        converted_int_2 = int(synthesized_float_3)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_float_3,
-                                      error=e))
+        print("10.0 is synthesized, converting it to int results in "
+              "error: {error}".format(error=e))
 
     try:
-        float_1 = float(synthesized_float_2)
+        converted_float_1 = float(synthesized_float_2)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_float_2,
-                                      error=e))
+        print("68.75 is synthesized, converting it to float results in "
+              "error: {error}".format(error=e))
 
-    float_2 = float(untrusted_float_7)
-    assert float_2 == 4.5, "float_2 should be -5, but it is {}.".format(float_2)
-    assert type(float_2) == float, "float_2 type is not float"
+    converted_float_2 = float(untrusted_float_7)
+    assert converted_float_2 == 4.5, "converted_float_2 should be 4.5, but it is {}.".format(converted_float_2)
+    assert type(converted_float_2) == float, "converted_float_2 type is not float"
+
+    converted_str_1 = str(untrusted_float_7)
+    assert converted_str_1 == '4.5', "converted_str_1 should be '4.5', but it is {}.".format(converted_str_1)
+    assert type(converted_str_1) == str, "converted_str_1 type is not str"
+
+    try:
+        converted_str_2 = str(synthesized_float_2)
+    except RuntimeError as e:
+        print("68.75 is synthesized, converting it to str results in "
+              "error: {error}".format(error=e))
 
 
 def untrusted_decimal_test():
@@ -539,29 +564,37 @@ def untrusted_decimal_test():
         "synthesized_decimal_2 type is not UntrustedDecimal"
 
     untrusted_decimal_8 = UntrustedDecimal(10)
-    int_1 = int(untrusted_decimal_8)
-    assert int_1 == 10, "int_1 should be 10, " \
-                        "but it is {}.".format(int_1)
-    assert type(int_1) == int, "int_1 type is not int"
+    converted_int_1 = int(untrusted_decimal_8)
+    assert converted_int_1 == 10, "converted_int_1 should be 10, " \
+                                  "but it is {}.".format(converted_int_1)
+    assert type(converted_int_1) == int, "converted_int_1 type is not int"
 
     synthesized_decimal_3 = UntrustedDecimal(10, synthesized=True)
     try:
-        int_2 = int(synthesized_decimal_3)
+        converted_int_2 = int(synthesized_decimal_3)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_decimal_3,
-                                      error=e))
+        print("10 is synthesized, converting it to int results in "
+              "error: {error}".format(error=e))
 
     try:
-        float_1 = float(synthesized_decimal_2)
+        converted_float_1 = float(synthesized_decimal_1)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_decimal_2,
-                                      error=e))
+        print("3.14 is synthesized, converting it to float results in "
+              "error: {error}".format(error=e))
 
-    float_2 = float(untrusted_decimal_7)
-    assert float_2 == 9.8596, "float_2 should be 9.8596, but it is {}.".format(float_2)
-    assert type(float_2) == float, "float_2 type is not float"
+    converted_float_2 = float(untrusted_decimal_7)
+    assert converted_float_2 == 9.8596, "converted_float_2 should be 9.8596, but it is {}.".format(converted_float_2)
+    assert type(converted_float_2) == float, "converted_float_2 type is not float"
+
+    converted_str_1 = str(untrusted_decimal_7)
+    assert converted_str_1 == '9.8596', "converted_str_1 should be '9.8596', but it is {}.".format(converted_str_1)
+    assert type(converted_str_1) == str, "converted_str_1 type is not str"
+
+    try:
+        converted_str_2 = str(synthesized_decimal_1)
+    except RuntimeError as e:
+        print("3.14 is synthesized, converting it to str results in "
+              "error: {error}".format(error=e))
 
 
 def untrusted_str_test():
@@ -613,32 +646,41 @@ def untrusted_str_test():
     assert type(synthesized_str_4) == type(untrusted_str), "synthesized_str_4 type is not UntrustedStr"
 
     untrusted_str_4 = UntrustedStr("10")
-    int_1 = int(untrusted_str_4)
-    assert int_1 == 10, "int_1 should be 10, " \
-                        "but it is {}.".format(int_1)
-    assert type(int_1) == int, "int_1 type is not int"
+    converted_int_1 = int(untrusted_str_4)
+    assert converted_int_1 == 10, "converted_int_1 should be 10, " \
+                                  "but it is {}.".format(converted_int_1)
+    assert type(converted_int_1) == int, "converted_int_1 type is not int"
 
     synthesized_str_5 = UntrustedStr("10", synthesized=True)
     try:
-        int_2 = int(synthesized_str_5)
+        converted_int_2 = int(synthesized_str_5)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_str_5,
-                                      error=e))
+        print("'10' is synthesized, converting it to int results in "
+              "error: {error}".format(error=e))
 
     untrusted_str_5 = UntrustedStr("10.5")
-    float_1 = float(untrusted_str_5)
-    assert float_1 == 10.5, "float_1 should be 10.5, " \
-                            "but it is {}.".format(float_1)
-    assert type(float_1) == float, "float_1 type is not float"
+    converted_float_1 = float(untrusted_str_5)
+    assert converted_float_1 == 10.5, "converted_float_1 should be 10.5, " \
+                                      "but it is {}.".format(converted_float_1)
+    assert type(converted_float_1) == float, "converted_float_1 type is not float"
 
     synthesized_str_6 = UntrustedStr("10.5", synthesized=True)
     try:
-        float_2 = float(synthesized_str_6)
+        converted_float_2 = float(synthesized_str_6)
     except RuntimeError as e:
-        print("{synthesized} is synthesized, converting it results in "
-              "error: {error}".format(synthesized=synthesized_str_6,
-                                      error=e))
+        print("'10.5' is synthesized, converting it to float results in "
+              "error: {error}".format(error=e))
+
+    converted_str_1 = str(untrusted_str)
+    assert converted_str_1 == 'Untrusted World!', "converted_str_1 should be 'Untrusted World!', " \
+                                                  "but it is {}.".format(converted_str_1)
+    assert type(converted_str_1) == str, "converted_str_1 type is not str"
+
+    try:
+        converted_str_2 = str(synthesized_str)
+    except RuntimeError as e:
+        print("'Fake World!' is synthesized, converting it to str results in "
+              "error: {error}".format(error=e))
 
 
 if __name__ == "__main__":
