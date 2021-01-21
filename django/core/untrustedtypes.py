@@ -261,7 +261,7 @@ class UntrustedInt(UntrustedMixin, int):
     def __hash__(self):
         """Override hash function to use either our default
         hash or the user-provided hash function."""
-        return type(self).custom_hash(int(self))
+        return type(self).custom_hash(self)
 
 
 class UntrustedFloat(UntrustedMixin, float):
