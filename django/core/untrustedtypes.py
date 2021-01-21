@@ -134,14 +134,18 @@ def add_synthesis_to_func(cls):
     # Handle base class functions if exists. Base classes are
     # unlikely to follow our synthesis naming convention.
     # However, some dunder methods clearly should *not* be
-    # decorated, we will add them in handled_funcs.
-    # Some can be more subtle:
+    # decorated, we will add them in handled_funcs. Non-decorated
+    # methods will follow the traditional MRO calling order!
+    # Some functions added to handled_funcs can be more subtle:
     # * __int__: This dunder method is called during int().
     #            If int() is called, we should not decorate it
-    #            but actually returns an int typed value.
+    #            but actually returns an int typed value (after
+    #            checking that conversion is allowed if calling
+    #            int() on untrusted types.
+    # * __float__: Follow the same reason as in __int__.
     handled_funcs.update({'__dict__', '__module__', '__doc__', '__repr__',
                           '__getattribute__', '__str__', '__new__', '__format__',
-                          '__int__'})
+                          '__int__', '__float__'})
     # __mro__ defines the list of *ordered* base classes (the first being cls and
     # the second being UntrustedMixin; UntrustedMixin should *not* be decorated)
     for base in cls.__mro__[2:]:
@@ -155,6 +159,11 @@ def add_synthesis_to_func(cls):
             # since there is not much convention we can specify.
             # Note that it is possible add_synthesis() can just
             # return the same function (value) with no changes.
+            # Note that we are adding those attributes to cls!
+            # Therefore, once decorated by add_synthesis(), cls
+            # will always call the decorated function (since it
+            # will be placed at the top of the MRO), not the one
+            # in any of the superclasses!
             setattr(cls, key, add_synthesis(value))
     return cls
 
@@ -182,6 +191,24 @@ class UntrustedMixin(object):
         of UntrustedMixin and its subclasses can be decorated."""
         super().__init_subclass__(**kwargs)
         add_synthesis_to_func(cls)
+
+    def __int__(self):
+        """Whenever int() is called on an untrusted object for conversion, check
+        the synthesized flag before conversion. This is safe conversion but
+        conversion may still fail if the input to int() cannot be converted to an int."""
+        if self.synthesized:
+            raise RuntimeError("cannot convert a synthesized value to a trusted int value")
+        else:
+            return super().__int__()
+
+    def __float__(self):
+        """Whenever float() is called on an untrusted object for conversion, check
+        the synthesized flag before conversion. This is safe conversion but
+        conversion may still fail if the input to float() cannot be converted to a float."""
+        if self.synthesized:
+            raise RuntimeError("cannot convert a synthesized value to a trusted float value")
+        else:
+            return super().__float__()
 
     @property
     def synthesized(self):
@@ -357,15 +384,42 @@ def untrusted_int_test():
     assert synthesized_int_7.synthesized is True, "synthesized_int_7 should be synthesized."
     assert type(synthesized_int_7) == type(synthesized_int_1), "synthesized_int_7 type is not UntrustedInt"
 
-    synthesized_int_8 = synthesized_int_1 / int_literal
-    assert synthesized_int_8 == 2.4, "synthesized_int_8 should be 2.4, but it is {}.".format(synthesized_int_8)
-    assert synthesized_int_8.synthesized is True, "synthesized_int_8 should be synthesized."
-    assert type(synthesized_int_8) == UntrustedFloat, "synthesized_int_8 type is not UntrustedFloat"
+    synthesized_float_8 = synthesized_int_1 / int_literal
+    assert synthesized_float_8 == 2.4, "synthesized_float_8 should be 2.4, but it is {}.".format(synthesized_float_8)
+    assert synthesized_float_8.synthesized is True, "synthesized_float_8 should be synthesized."
+    assert type(synthesized_float_8) == UntrustedFloat, "synthesized_float_8 type is not UntrustedFloat"
 
-    synthesized_int_9 = int_literal / synthesized_int_1
-    assert synthesized_int_9 == 5 / 12, "synthesized_int_9 should be 5/12, but it is {}.".format(synthesized_int_9)
-    assert synthesized_int_9.synthesized is True, "synthesized_int_9 should be synthesized."
-    assert type(synthesized_int_9) == UntrustedFloat, "synthesized_int_9 type is not UntrustedFloat"
+    synthesized_float_9 = int_literal / synthesized_int_1
+    assert synthesized_float_9 == 5 / 12, "synthesized_float_9 should be 5/12, " \
+                                          "but it is {}.".format(synthesized_float_9)
+    assert synthesized_float_9.synthesized is True, "synthesized_float_9 should be synthesized."
+    assert type(synthesized_float_9) == UntrustedFloat, "synthesized_float_9 type is not UntrustedFloat"
+
+    try:
+        converted_int_1 = int(synthesized_int_6)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_int_6,
+                                      error=e))
+
+    converted_int_2 = int(untrusted_int_9)
+    assert converted_int_2 == untrusted_int_9, "converted_int_2 should be -5, but it is {}.".format(converted_int_2)
+    assert type(converted_int_2) == int, "converted_int_2 type is not int"
+
+    int_1 = int(base_int)
+    assert int_1 == base_int, "int_1 should be 10, but it is {}.".format(int_1)
+    assert type(int_1) == int, "int_1 type is not int"
+
+    try:
+        converted_float_1 = int(synthesized_int_6)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_int_6,
+                                      error=e))
+
+    converted_float_2 = float(untrusted_int_9)
+    assert converted_float_2 == -5, "converted_float_2 should be -5, but it is {}.".format(converted_float_2)
+    assert type(converted_float_2) == float, "converted_float_2 type is not float"
 
 
 def untrusted_float_test():
@@ -417,6 +471,31 @@ def untrusted_float_test():
     assert synthesized_float_2.synthesized is True, "synthesized_float_2 should be synthesized."
     assert type(synthesized_float_2) == type(untrusted_float_1), "synthesized_float_2 type is not UntrustedFloat"
 
+    untrusted_float_9 = UntrustedFloat(10)
+    int_1 = int(untrusted_float_9)
+    assert int_1 == 10, "int_1 should be 10, " \
+                        "but it is {}.".format(int_1)
+    assert type(int_1) == int, "int_1 type is not int"
+
+    synthesized_float_3 = UntrustedFloat(10, synthesized=True)
+    try:
+        int_2 = int(synthesized_float_3)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_float_3,
+                                      error=e))
+
+    try:
+        float_1 = float(synthesized_float_2)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_float_2,
+                                      error=e))
+
+    float_2 = float(untrusted_float_7)
+    assert float_2 == 4.5, "float_2 should be -5, but it is {}.".format(float_2)
+    assert type(float_2) == float, "float_2 type is not float"
+
 
 def untrusted_decimal_test():
     base_decimal = Decimal('3.14')
@@ -458,6 +537,31 @@ def untrusted_decimal_test():
     assert synthesized_decimal_2.synthesized is True, "synthesized_decimal_2 should be synthesized."
     assert type(synthesized_decimal_2) == type(untrusted_decimal_1), \
         "synthesized_decimal_2 type is not UntrustedDecimal"
+
+    untrusted_decimal_8 = UntrustedDecimal(10)
+    int_1 = int(untrusted_decimal_8)
+    assert int_1 == 10, "int_1 should be 10, " \
+                        "but it is {}.".format(int_1)
+    assert type(int_1) == int, "int_1 type is not int"
+
+    synthesized_decimal_3 = UntrustedDecimal(10, synthesized=True)
+    try:
+        int_2 = int(synthesized_decimal_3)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_decimal_3,
+                                      error=e))
+
+    try:
+        float_1 = float(synthesized_decimal_2)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_decimal_2,
+                                      error=e))
+
+    float_2 = float(untrusted_decimal_7)
+    assert float_2 == 9.8596, "float_2 should be 9.8596, but it is {}.".format(float_2)
+    assert type(float_2) == float, "float_2 type is not float"
 
 
 def untrusted_str_test():
@@ -507,6 +611,34 @@ def untrusted_str_test():
                                                      " but it is {}.".format(synthesized_str_4)
     assert synthesized_str_4.synthesized is True, "synthesized_str_4 should be synthesized."
     assert type(synthesized_str_4) == type(untrusted_str), "synthesized_str_4 type is not UntrustedStr"
+
+    untrusted_str_4 = UntrustedStr("10")
+    int_1 = int(untrusted_str_4)
+    assert int_1 == 10, "int_1 should be 10, " \
+                        "but it is {}.".format(int_1)
+    assert type(int_1) == int, "int_1 type is not int"
+
+    synthesized_str_5 = UntrustedStr("10", synthesized=True)
+    try:
+        int_2 = int(synthesized_str_5)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_str_5,
+                                      error=e))
+
+    untrusted_str_5 = UntrustedStr("10.5")
+    float_1 = float(untrusted_str_5)
+    assert float_1 == 10.5, "float_1 should be 10.5, " \
+                            "but it is {}.".format(float_1)
+    assert type(float_1) == float, "float_1 type is not float"
+
+    synthesized_str_6 = UntrustedStr("10.5", synthesized=True)
+    try:
+        float_2 = float(synthesized_str_6)
+    except RuntimeError as e:
+        print("{synthesized} is synthesized, converting it results in "
+              "error: {error}".format(synthesized=synthesized_str_6,
+                                      error=e))
 
 
 if __name__ == "__main__":
