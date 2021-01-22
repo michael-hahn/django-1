@@ -19,6 +19,7 @@ class BaseSynthesizableStruct(ABC):
         get_func = getattr(cls, 'get', None)
         peek_func = getattr(cls, 'peek', None)
         save_func = getattr(cls, 'save', None)
+        delete_func = getattr(cls, 'delete', None)
         synthesize_func = getattr(cls, 'synthesize', None)
         if get_func:
             setattr(cls, 'get', synthesis_error(get_func))
@@ -26,6 +27,8 @@ class BaseSynthesizableStruct(ABC):
             setattr(cls, 'peek', synthesis_warning(peek_func))
         if save_func:
             setattr(cls, 'save', untrustify(save_func))
+        if delete_func:
+            setattr(cls, 'delete', untrustify(delete_func))
         if synthesize_func:
             setattr(cls, 'synthesize', untrustify(synthesize_func))
 
@@ -40,6 +43,12 @@ class BaseSynthesizableStruct(ABC):
         """All concrete data struct classes must implement this
         interface to query the data structure. Query will fail
         if data queried from the data structure is synthesized."""
+        pass
+
+    @abstractmethod
+    def delete(self, **kwargs):
+        """All concrete data struct classes must implement this
+        interface to remove the data from the data structure."""
         pass
 
     def peek(self, *args, **kwargs):

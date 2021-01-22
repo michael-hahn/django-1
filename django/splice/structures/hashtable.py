@@ -121,6 +121,12 @@ class SynthesizableHashTable(HashTable, BaseSynthesizableStruct):
         obtain data from SynthesizableHashTable."""
         return self.__getitem__(key)
 
+    def delete(self, key):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        remove data from SynthesizableHashTable."""
+        return self.__delitem__(key)
+
 
 class SynthesizableDict(UserDict, BaseSynthesizableStruct):
     """Inherit from UserDict to create a custom dict that
@@ -148,6 +154,12 @@ class SynthesizableDict(UserDict, BaseSynthesizableStruct):
         this method. This is the public-facing interface to
         store data into SynthesizableDict."""
         self.data[key] = value
+
+    def delete(self, key):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        remove data from SynthesizableDict."""
+        del self.data[key]
 
     def synthesize(self, key):
         """dict does not provide a programmatic way to access
@@ -245,3 +257,14 @@ if __name__ == "__main__":
                                                                                        synthesis=key.synthesized))
         except RuntimeError as e:
             print("* Key: {key} is synthesized (hash: {hash})".format(key=key, hash=key.__hash__()))
+    sd.delete("Andre")
+    print("After deleting 'Andre' by calling delete(), enumerate again:")
+    for key, value in sd.items():
+        try:
+            print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
+                                                                                       hash=key.__hash__(),
+                                                                                       value=sd.get(key),
+                                                                                       synthesis=key.synthesized))
+        except RuntimeError as e:
+            print("* Key: {key} is synthesized (hash: {hash})".format(key=key, hash=key.__hash__()))
+

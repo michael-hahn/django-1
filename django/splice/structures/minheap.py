@@ -23,7 +23,7 @@ class SynthesizableMinHeap(BaseSynthesizableStruct):
         This is the public-facing interface to store data into SynthesizableMinHeap."""
         heapq.heappush(self._heap, item)
 
-    def pop(self):
+    def delete(self):
         """Pop the smallest item off the heap, while maintaining heap invariant.
         BaseSynthesizableStruct enforces implementation of this method. This is t
         he public-facing interface to obtain data from SynthesizableMinHeap.
@@ -153,6 +153,8 @@ if __name__ == "__main__":
     mh.save("Tommy")
     mh.save("Sandra")
     print("Initial str min heap:\n{mh}".format(mh=mh))
+    mh.delete()
+    print("After popping the min value:\n{mh}".format(mh=mh))
     mh.synthesize(0)
     print("After synthesizing min:\n{mh}".format(mh=mh))
     mh.synthesize(2)

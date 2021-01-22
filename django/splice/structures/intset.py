@@ -301,17 +301,23 @@ if __name__ == "__main__":
     # Delete does not "downgrading" encoding in Redis
     int_set.delete(0)
     int_set.delete(30)
-    print("intSet (after deleting 0 and 30): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting 0 and 30): {set} ({bytes} bytes)".format(set=int_set,
+                                                                           bytes=len(int_set._contents)))
     int_set.delete(-2447483747)
-    print("intSet (after deleting -2447483747): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting -2447483747): {set} ({bytes} bytes)".format(set=int_set,
+                                                                              bytes=len(int_set._contents)))
     int_set.delete(2447483647)
-    print("intSet (after deleting 2447483647): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting 2447483647): {set} ({bytes} bytes)".format(set=int_set,
+                                                                             bytes=len(int_set._contents)))
     int_set.synthesize(0)
-    print("intSet (after synthesizing -335267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing -335267): {set} ({bytes} bytes)".format(set=int_set,
+                                                                              bytes=len(int_set._contents)))
     int_set.synthesize(3)
-    print("intSet (after synthesizing 14): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing 14): {set} ({bytes} bytes)".format(set=int_set,
+                                                                         bytes=len(int_set._contents)))
     int_set.synthesize(4)
-    print("intSet (after synthesizing 35267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing 35267): {set} ({bytes} bytes)".format(set=int_set,
+                                                                            bytes=len(int_set._contents)))
     print("Getting element from intSet through get():")
     for i in range(len(int_set)):
         try:

@@ -74,11 +74,17 @@ class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
         store data into SynthesizableSortedList."""
         self.add(value)
 
-    def get(self, key):
+    def get(self, idx):
         """BaseSynthesizableStruct enforces implementation of
         this method. This is the public-facing interface to
         obtain data from SynthesizableSortedList."""
-        return self.__getitem__(key)
+        return self.__getitem__(idx)
+
+    def delete(self, value):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        obtain data from SynthesizableSortedList."""
+        return self.discard(value)
 
 
 if __name__ == "__main__":
@@ -119,3 +125,5 @@ if __name__ == "__main__":
         print("sl[4] = {value}".format(value=sl.get(4)))
     except RuntimeError as e:
         print("sl[4] is synthesized. One should not try to get its value.")
+    sl.delete(6)
+    print("SortedList (after deleting 6): {}".format(sl))
