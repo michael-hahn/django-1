@@ -77,10 +77,43 @@ def to_untrusted(value, synthesized):
     #####################################################
     # TODO: Add more casting here for new untrusted types
     #####################################################
+    # recursively convert values in list or other structured data
+    elif isinstance(value, list):
+        return [to_untrusted(v, synthesized) for v in value]
+    elif isinstance(value, tuple):
+        return tuple(to_untrusted(v, synthesized) for v in value)
+    elif isinstance(value, set):
+        return {to_untrusted(v, synthesized) for v in value}
+    elif isinstance(value, dict):
+        return {to_untrusted(k, synthesized): to_untrusted(v, synthesized)
+                for k, v in value.items()}
     # TODO: We may consider a generic Untrusted type,
     #  instead of returning a trusted value.
     else:
         return value
+
+
+def is_synthesized(value):
+    """A helper function that checks if a value
+    contains a set (True) synthesized flag."""
+    synthesized = False
+    if isinstance(value, UntrustedMixin):
+        return value.synthesized
+    # recursively convert values in list or other structured data
+    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set):
+        for v in value:
+            if is_synthesized(v):
+                synthesized = True
+                break
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if is_synthesized(k):
+                synthesized = True
+                break
+            if is_synthesized(v):
+                synthesized = True
+                break
+    return synthesized
 
 
 def add_synthesis(func):
@@ -94,11 +127,13 @@ def add_synthesis(func):
         # Set synthesized flag if any args/kwargs sets the flag
         synthesized = False
         for arg in args:
-            if issubclass(type(arg), UntrustedMixin):
-                synthesized = synthesized or arg.synthesized
+            if is_synthesized(arg):
+                synthesized = True
+                break
         for key, value in kwargs.items():
-            if issubclass(type(value), UntrustedMixin):
-                synthesized = synthesized or value.synthesized
+            if is_synthesized(value):
+                synthesized = True
+                break
         return to_untrusted(res, synthesized)
     return wrapper
 
@@ -135,7 +170,7 @@ def synthesis_check(func, warn):
     def wrapper(*args, **kwargs):
         synthesized = False
         res = func(*args, **kwargs)
-        if isinstance(res, UntrustedMixin):
+        if is_synthesized(res):
             synthesized = res.synthesized
         if not synthesized:
             return res
