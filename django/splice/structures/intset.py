@@ -259,7 +259,10 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
                                             lower_bound=IntSet.INT32_MIN)
 
         # Value constraints imposed by the position of the value in intSet
-        if pos == 0:
+        if self._length == 1:
+            # No value constraints if it is the only element in intSet
+            pass
+        elif pos == 0:
             # The value to be synthesized is the smallest in the sorted list
             synthesizer.lt_constraint(self.__getitem__(pos+1, self._encoding))
         elif pos == self._length-1:

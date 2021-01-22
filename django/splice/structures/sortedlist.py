@@ -48,6 +48,12 @@ class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
         value = self.__getitem__(index)
         synthesizer = init_synthesizer(value)
 
+        if self._len == 1:
+            # If there is only one element in the sortedlist
+            # We use simple_synthesis() for now
+            self.__setitem__(index, synthesizer.simple_synthesis(value))
+            return True
+
         if index == 0:
             # The value to be synthesized is the smallest in the sorted list
             synthesizer.lt_constraint(self.__getitem__(index + 1))
