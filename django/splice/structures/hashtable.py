@@ -2,7 +2,8 @@
 from collections import UserDict
 
 from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
-from django.splice.synthesis import IntSynthesizer, StrSynthesizer, init_synthesizer
+from django.splice.synthesis import IntSynthesizer, StrSynthesizer
+from django.splice.structs import BaseSynthesizableStruct
 
 
 class HashTable(object):
@@ -12,8 +13,9 @@ class HashTable(object):
     be chained in the same bucket as the size continues to grow."""
     DEFAULT_NUM_BUCKETS = 10
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         """A hash table is just a list of lists. Each list represents a bucket."""
+        super().__init__(*args, **kwargs)
         self._num_buckets = self.DEFAULT_NUM_BUCKETS
         self._hash_table = [list() for _ in range(self._num_buckets)]
 
@@ -69,11 +71,11 @@ class HashTable(object):
         return item in self.keys()
 
 
-class SynthesizableHashTable(HashTable):
+class SynthesizableHashTable(HashTable, BaseSynthesizableStruct):
     """Inherit from HashTable to create a custom HashTable
     that behaves exactly like a HashTable but the elements
     in the SynthesizableHashTable can be synthesized."""
-    def synthesis(self, key):
+    def synthesize(self, key):
         """Synthesize a given key in the hash table only if key already
         exists in the hash table. The synthesized key must ensure that
         the hash of the synthesized key is the same as that of the original.
@@ -101,12 +103,26 @@ class SynthesizableHashTable(HashTable):
 
                 synthesized_key = synthesizer.to_python(synthesizer.value)
                 # Overwrite the original key with the synthesized key
+                # We do not overwrite value but only set the synthesized flag
+                v.synthesized = True
                 bucket[i] = (synthesized_key, v)
                 return True
         return False
 
+    def save(self, key, value):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        store data into SynthesizableHashTable."""
+        self.__setitem__(key=key, value=value)
 
-class SynthesizableDict(UserDict):
+    def get(self, key):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        obtain data from SynthesizableHashTable."""
+        return self.__getitem__(key)
+
+
+class SynthesizableDict(UserDict, BaseSynthesizableStruct):
     """Inherit from UserDict to create a custom dict that
     behaves exactly like Python's built-in dict but the
     elements in the SynthesizableDict can be synthesized.
@@ -121,7 +137,19 @@ class SynthesizableDict(UserDict):
     use MutableMapping as a mixin class to inherit. ABC makes
     modifying a data structure's core functionality easier
     than directly modifying it from dict."""
-    def synthesis(self, key):
+    def get(self, key):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        obtain data from SynthesizableDict."""
+        return self.data[key]
+
+    def save(self, key, value):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        store data into SynthesizableDict."""
+        self.data[key] = value
+
+    def synthesize(self, key):
         """dict does not provide a programmatic way to access
         and overwrite keys in-place. Since UserDict (as well
         as MutableMapping for that matter) uses Python
@@ -150,41 +178,70 @@ class SynthesizableDict(UserDict):
         #  because of the default hash function of UntrustedInt, the
         #  synthesized int might be the same as the original int key, so
         #  this insertion does not have any effect.
+        val.synthesized = True
         self.data[synthesized_key] = val
         del self.data[key]
 
 
 if __name__ == "__main__":
     sd = SynthesizableHashTable()
-    sd[UntrustedStr("Jake")] = UntrustedInt(7)
-    sd[UntrustedStr("Blair")] = UntrustedInt(5)
-    sd[UntrustedStr("Luke")] = UntrustedInt(14)
-    sd[UntrustedStr("Andre")] = UntrustedInt(9)
-    sd[UntrustedStr("Zack")] = UntrustedInt(12)
+    sd.save("Jake", 7)
+    sd.save("Blair", 5)
+    sd.save("Luke", 14)
+    sd.save("Andre", 9)
+    sd.save("Zack", 12)
+    print("Enumerating a string-keyed hash table:")
     for key, value in sd:
-        print("{key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd[key]))
+        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
+    sd.synthesize("Blair")
+    print("After deleting 'Blair' by synthesis, enumerate again:")
+    for key, value in sd:
+        try:
+            print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
+                                                                                       hash=key.__hash__(),
+                                                                                       value=sd.get(key),
+                                                                                       synthesis=key.synthesized))
+        except RuntimeError as e:
+            print("* Key: {key} is synthesized (hash: {hash})".format(key=key, hash=key.__hash__()))
 
-    sd.synthesis(UntrustedStr("Blair"))
-    print("After deleting 'Blair' by synthesis...")
-    for key, value in sd:
-        print("{key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                 hash=key.__hash__(),
-                                                                                 value=sd[key],
-                                                                                 synthesis=key.synthesized))
     sd = SynthesizableHashTable()
-    sd[UntrustedInt(7)] = UntrustedStr("Jake")
+    sd.save(7, "Jake")
     # We need a super big integer key so that the synthesized integer
     # value would be different from this original value
-    sd[UntrustedInt(32345435432758439203535345435)] = UntrustedStr("Blair")
-    sd[UntrustedInt(14)] = UntrustedStr("Luke")
-    sd[UntrustedInt(9)] = UntrustedStr("Andre")
-    sd[UntrustedInt(12)] = UntrustedStr("Zack")
+    sd.save(32345435432758439203535345435, "Blair")
+    sd.save(14, "Luke")
+    sd.save(9, "Andre")
+    sd.save(12, "Zack")
+    print("Enumerating an int-keyed hash table:")
     for key, value in sd:
-        print("{key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd[key]))
-    sd.synthesis(UntrustedInt(32345435432758439203535345435))
-    print("After deleting '32345435432758439203535345435' by synthesis...")
+        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
+    sd.synthesize(32345435432758439203535345435)
+    print("After deleting '32345435432758439203535345435' by synthesis, enumerate again:")
     for key, value in sd:
-        print("{key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
-                                                                                      hash=key.__hash__(),
-                                                                                      value=sd[key],
-                                                                                      synthesis=key.synthesized))
+        try:
+            print("* {key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
+                                                                                            hash=key.__hash__(),
+                                                                                            value=sd.get(key),
+                                                                                            synthesis=key.synthesized))
+        except RuntimeError as e:
+            print("* Key: {key} is synthesized (hash: {hash})".format(key=key, hash=key.__hash__()))
+
+    sd = SynthesizableDict()
+    sd.save("Jake", 7)
+    sd.save("Blair", 5)
+    sd.save("Luke", 14)
+    sd.save("Andre", 9)
+    sd.save("Zack", 12)
+    print("Enumerating a string-keyed hash table:")
+    for key, value in sd.items():
+        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
+    sd.synthesize("Luke")
+    print("After deleting 'Luke' by synthesis, enumerate again:")
+    for key, value in sd.items():
+        try:
+            print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
+                                                                                       hash=key.__hash__(),
+                                                                                       value=sd.get(key),
+                                                                                       synthesis=key.synthesized))
+        except RuntimeError as e:
+            print("* Key: {key} is synthesized (hash: {hash})".format(key=key, hash=key.__hash__()))

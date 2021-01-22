@@ -2,33 +2,48 @@
 import heapq
 
 from django.splice.synthesis import init_synthesizer
+from django.splice.structs import BaseSynthesizableStruct
 
 
-class SynthesizableMinHeap(object):
+class SynthesizableMinHeap(BaseSynthesizableStruct):
     """A binary min heap for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for
     all k, counting elements from 0. For the sake of comparison, non-existing
     elements are considered to be infinite.  The interesting property of a
     heap is that a[0] is always its smallest element. See docstring from heapq.py."""
-    def __init__(self, initial=[]):
+    def __init__(self, initial=[], *args, **kwargs):
         """Defaults to an empty heap. Initial can also be
         a list, which could be transformed into a heap."""
+        super().__init__(*args, **kwargs)
         self._heap = initial
         heapq.heapify(self._heap)
 
-    def insert(self, item):
-        """Insert item into the heap while maintaining heap invariance."""
+    def save(self, item):
+        """Insert item into the heap while maintaining heap invariance.
+        BaseSynthesizableStruct enforces implementation of this method.
+        This is the public-facing interface to store data into SynthesizableMinHeap."""
         heapq.heappush(self._heap, item)
 
     def pop(self):
-        """Pop the smallest item off the heap, while maintaining heap invariant."""
+        """Pop the smallest item off the heap, while maintaining heap invariant.
+        BaseSynthesizableStruct enforces implementation of this method. This is t
+        he public-facing interface to obtain data from SynthesizableMinHeap.
+
+        Important Note: this method should not be used as get() since if it fails
+        (because it returns a synthesized value), it would have already modified
+        the data structure and popped the head of the queue! A get() function that
+        might fail should not modify the data structure unless there is roll-back
+        action defined somehow!"""
         return heapq.heappop(self._heap)
 
-    def peek(self):
+    def get(self):
         """Return the smallest item from the heap (if exists),
         without popping it out. Otherwise, return None."""
         if len(self._heap) > 0:
             return self._heap[0]
         return None
+
+    def clear(self):
+        self._heap.clear()
 
     def to_list(self):
         """Return a list of all elements in the heap."""
@@ -89,32 +104,56 @@ class SynthesizableMinHeap(object):
         heap = str()
         for i in range(0, (len(self._heap) // 2)):
             if 2*i+2 < len(self._heap):
-                heap += "[{parent}] -> [{left}  {right}]\n".format(parent=self._heap[i],
-                                                                   left=self._heap[2*i+1],
-                                                                   right=self._heap[2*i+2])
+                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
+                        "-> [{left} (Synthesized: {left_synthesis})  " \
+                        "{right} (Synthesized: " \
+                        "{right_synthesis})]\n".format(parent=self._heap[i],
+                                                       parent_synthesis=self._heap[i].synthesized,
+                                                       left=self._heap[2*i+1],
+                                                       left_synthesis=self._heap[2*i+1].synthesized,
+                                                       right=self._heap[2*i+2],
+                                                       right_synthesis=self._heap[2*i+2].synthesized)
             else:
-                heap += "[{parent}] -> [{left} ]".format(parent=self._heap[i],
-                                                         left=self._heap[2 * i + 1])
+                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
+                        "-> [{left} (Synthesized: " \
+                        "{left_synthesis})]".format(parent=self._heap[i],
+                                                    parent_synthesis=self._heap[i].synthesized,
+                                                    left=self._heap[2 * i + 1],
+                                                    left_synthesis=self._heap[2 * i + 1].synthesized)
         return heap
 
 
 if __name__ == "__main__":
-    from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
-
-    mh = SynthesizableMinHeap([UntrustedInt(4), UntrustedInt(3), UntrustedInt(5),
-                               UntrustedInt(12), UntrustedInt(5), UntrustedInt(7),
-                               UntrustedInt(1)])
-    print("Initial min heap:\n{mh}".format(mh=mh))
+    mh = SynthesizableMinHeap()
+    mh.save(4)
+    mh.save(3)
+    mh.save(5)
+    mh.save(12)
+    mh.save(5)
+    mh.save(7)
+    mh.save(1)
+    print("Initial int min heap:\n{mh}".format(mh=mh))
+    print("Before synthesizing min, we can get min value: {min}".format(min=mh.get()))
     mh.synthesize(0)
-    print("After synthesis the root node:\n{mh}".format(mh=mh))
+    print("After synthesizing min:\n{mh}".format(mh=mh))
+    print("Now if we try to get min value:")
+    try:
+        min_value = mh.get()
+    except RuntimeError as e:
+        print("* min value is synthesized")
     mh.synthesize(2)
-    print("After synthesis an intermediate node:\n{mh}".format(mh=mh))
+    print("After synthesizing an intermediate value:\n{mh}".format(mh=mh))
 
-    mh = SynthesizableMinHeap([UntrustedStr("Jake"), UntrustedStr("Blair"), UntrustedStr("Luke"),
-                               UntrustedStr("Andre"), UntrustedStr("Zack"), UntrustedStr("Tommy"),
-                               UntrustedStr("Sandra")])
-    print("Initial min heap:\n{mh}".format(mh=mh))
+    mh.clear()
+    mh.save("Jake")
+    mh.save("Blair")
+    mh.save("Luke")
+    mh.save("Andre")
+    mh.save("Zack")
+    mh.save("Tommy")
+    mh.save("Sandra")
+    print("Initial str min heap:\n{mh}".format(mh=mh))
     mh.synthesize(0)
-    print("After synthesis the root node:\n{mh}".format(mh=mh))
+    print("After synthesizing min:\n{mh}".format(mh=mh))
     mh.synthesize(2)
-    print("After synthesis an intermediate node:\n{mh}".format(mh=mh))
+    print("After synthesizing an intermediate value:\n{mh}".format(mh=mh))

@@ -1,6 +1,7 @@
 """Redis IntSet and Synthesizable IntSet"""
-from django.splice.synthesis import init_synthesizer, IntSynthesizer
-from django.splice.untrustedtypes import UntrustedMixin, UntrustedInt
+from django.splice.synthesis import init_synthesizer
+from django.splice.untrustedtypes import UntrustedInt
+from django.splice.structs import BaseSynthesizableStruct
 
 
 class IntSet(object):
@@ -20,12 +21,13 @@ class IntSet(object):
     INT32_MIN = -2_147_483_648
     INT32_MAX = 2_147_483_647
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         """Initialize an intSet with default int16 encoding, which
         can be upgraded to int32 and then int64 later if needed.
         self._length is the number of actual integers in intSet, *not*
         the length of self._contents. Each element in self._contents
         is an int8 value."""
+        super().__init__(*args, **kwargs)
         self._encoding = IntSet.INTSET_ENC_INT16
         self._length = 0
         self._contents = list()
@@ -183,7 +185,7 @@ class IntSet(object):
         return set_str
 
 
-class SynthesizableIntSet(IntSet):
+class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
     """Inherit from IntSet to create a custom IntSet
     that behaves exactly like a IntSet (with elements sorted
     in the list) but the elements in the SynthesizableIntSet
@@ -207,6 +209,12 @@ class SynthesizableIntSet(IntSet):
                                            byteorder='big', signed=True),
                             synthesized=synthesized)
 
+    def get(self, pos):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        obtain data from SynthesizableIntSet."""
+        return self.__getitem__(pos, self._encoding)
+
     def __setitem__(self, pos, value, encoding):
         """Override the superclass __setitem__ method
         because value is converted into a byte array
@@ -214,16 +222,17 @@ class SynthesizableIntSet(IntSet):
         of being directly inserted into the data structure.
         We do not want to "lose" the Untrusted type during
         the conversion!"""
-        if not issubclass(type(value), UntrustedMixin):
-            raise ValueError("Only Untrusted-typed value can be inserted "
-                             "into SynthesizableIntSet, but {value} is "
-                             "of type {type}".format(value=value,
-                                                     type=type(value)))
         synthesized = value.synthesized
         byte_arr = [UntrustedInt(i, synthesized=synthesized)
                     for i in value.to_bytes(self._encoding, byteorder='big', signed=True)]
         for i in range(pos*encoding, (pos+1)*encoding):
             self._contents[i] = byte_arr[i-pos*encoding]
+
+    def save(self, value):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        store data into SynthesizableIntSet."""
+        return self.add(value=value)
 
     def synthesize(self, pos):
         """Synthesize a new value at pos (of intSet) without invalidating ordered-set
@@ -267,40 +276,43 @@ class SynthesizableIntSet(IntSet):
 
 if __name__ == "__main__":
     int_set = SynthesizableIntSet()
-    int_set.add(UntrustedInt(5))
-    int_set.add(UntrustedInt(30))
-    int_set.add(UntrustedInt(-7))
-    int_set.add(UntrustedInt(14))
-    int_set.add(UntrustedInt(5))
+    int_set.save(5)
+    int_set.save(30)
+    int_set.save(-7)
+    int_set.save(14)
+    int_set.save(5)
     # We should not have access to _contents but it is OK for testing
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.add(UntrustedInt(35267))
+    print("intSet: {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    int_set.save(35267)
     # We expect the intSet to take more space now (int16 -> int32)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.add(UntrustedInt(2_447_483_647))
+    print("intSet (after inserting 35267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    int_set.save(2_447_483_647)
     # We expect the intSet to take even more space now (int32 -> int64)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.add(UntrustedInt(-335267))
-    int_set.add(UntrustedInt(-2_447_483_747))
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after inserting 2,447,483,647): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    int_set.save(-335267)
+    int_set.save(-2_447_483_747)
+    print("intSet (after inserting -335267 and -2,447,483,747): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     print("45 is in the set: {}".format(int_set.find(45)))
     print("35267 is in the set: {}".format(int_set.find(35267)))
     print("-335267 is in the set: {}".format(int_set.find(-335267)))
     # Delete does not "downgrading" encoding in Redis
     int_set.delete(0)
     int_set.delete(30)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting 0 and 30): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     int_set.delete(-2447483747)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting -2447483747): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     int_set.delete(2447483647)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after deleting 2447483647): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     int_set.synthesize(0)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing -335267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     int_set.synthesize(3)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing 14): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     int_set.synthesize(4)
-    print("{set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("intSet (after synthesizing 35267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
+    print("Getting element from intSet through get():")
     for i in range(len(int_set)):
-        value = int_set.__getitem__(i, int_set._encoding)
-        print("{value} is synthesized: {synthesized}".format(value=value,
-                                                             synthesized=value.synthesized))
+        try:
+            value = int_set.get(i)
+            print("* {value} is a valid value in the intSet".format(value=value))
+        except RuntimeError as e:
+            print("* {i}th element in the intSet is synthesized so there is no point getting it".format(i=i))

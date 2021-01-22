@@ -1,11 +1,11 @@
 """Synthesizable sorted list data structure"""
-from abc import ABC
 from sortedcontainers import SortedList
 
 from django.splice.synthesis import init_synthesizer
+from django.splice.structs import BaseSynthesizableStruct
 
 
-class SynthesizableSortedList(SortedList, ABC):
+class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
     """Inherit from SortedList to create a custom sorted list
     that behaves exactly like a sorted list (with elements sorted
     in the list) but the elements in the SynthesizableSortedList
@@ -38,7 +38,7 @@ class SynthesizableSortedList(SortedList, ABC):
         if idx == len(_lists[pos]) - 1:
             _maxes[pos] = value
 
-    def synthesis(self, index):
+    def synthesize(self, index):
         """Synthesize a value at a given index in the sorted list.
         The synthesized value must ensure that the list is still sorted.
         If synthesis succeeded, return True."""
@@ -62,28 +62,54 @@ class SynthesizableSortedList(SortedList, ABC):
         self.__setitem__(index, synthesized_value)
         return True
 
+    def save(self, value):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        store data into SynthesizableSortedList."""
+        self.add(value)
+
+    def get(self, key):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        obtain data from SynthesizableSortedList."""
+        return self.__getitem__(key)
+
 
 if __name__ == "__main__":
-    from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
+    sl = SynthesizableSortedList()
+    sl.save("Jake")
+    sl.save("Blair")
+    sl.save("Luke")
+    sl.save("Andre")
+    sl.save("Zack")
+    print("SortedList: {}".format(sl))
+    sl.synthesize(2)
+    print("SortedList (after synthesizing Jake): {}".format(sl))
+    sl.synthesize(0)
+    print("SortedList (after synthesizing Andre): {}".format(sl))
+    sl.synthesize(4)
+    print("SortedList (after synthesizing Zack): {}".format(sl))
+    print("sl[1] = {value}".format(value=sl.get(1)))
+    try:
+        print("sl[2] = {value}".format(value=sl.get(2)))
+    except RuntimeError as e:
+        print("sl[2] is synthesized. One should not try to get its value.")
 
     sl = SynthesizableSortedList()
-    sl.update([UntrustedStr("Jake"), UntrustedStr("Blair"), UntrustedStr("Luke"),
-               UntrustedStr("Andre"), UntrustedStr("Zack")])
-    print(sl)
-    sl.synthesis(2)
-    print(sl)
-    sl.synthesis(0)
-    print(sl)
-    sl.synthesis(4)
-    print(sl)
-
-    sl = SynthesizableSortedList()
-    sl.update([UntrustedInt(7), UntrustedInt(5), UntrustedInt(14),
-               UntrustedInt(9), UntrustedInt(12)])
-    print(sl)
-    sl.synthesis(2)
-    print(sl)
-    sl.synthesis(0)
-    print(sl)
-    sl.synthesis(4)
-    print(sl)
+    sl.save(7)
+    sl.save(5)
+    sl.save(14)
+    sl.save(9)
+    sl.save(12)
+    print("SortedList: {}".format(sl))
+    sl.synthesize(2)
+    print("SortedList (after synthesizing 9): {}".format(sl))
+    sl.synthesize(0)
+    print("SortedList (after synthesizing 5): {}".format(sl))
+    sl.synthesize(4)
+    print("SortedList (after synthesizing 14): {}".format(sl))
+    print("sl[3] = {value}".format(value=sl.get(3)))
+    try:
+        print("sl[4] = {value}".format(value=sl.get(4)))
+    except RuntimeError as e:
+        print("sl[4] is synthesized. One should not try to get its value.")

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import inspect
 import functools
+import warnings
 
 
 # DEBUGGING FUNCTIONS #################################################################################################
@@ -13,7 +14,7 @@ def synthesis_debug(func):
     """A function decorator used to decorate modified
     functions in the original Django framework for
     debugging our imposed synthesis framework."""
-
+    @functools.wraps(func)
     def get_class(method):
         """Get the class that defines the called function/method.
         It is unlikely that we encounter all cases defined below,
@@ -53,12 +54,39 @@ def synthesis_debug(func):
 #######################################################################################################################
 
 
-def add_synthesis(func):
-    """A function decorator that decorates func.
-    This decorator makes an UntrustedX class inherit
-    all its base (non-untrusted) class functions
-    and return Untrusted values."""
+def to_untrusted(value, synthesized):
+    """Convert a value to its corresponding untrusted
+    type if exists. The flag will be set as synthesized.
+    If no untrusted version exists, return itself."""
+    if isinstance(value, UntrustedMixin):
+        # If value is already an Untrusted type
+        value.synthesized = synthesized
+        return value
+    # boolean value is always bool (bool is not extensible)
+    # bool is a subclass of int, so we must check this first
+    elif isinstance(value, bool):
+        return value
+    elif isinstance(value, int):
+        return UntrustedInt(value, synthesized=synthesized)
+    elif isinstance(value, float):
+        return UntrustedFloat(value, synthesized=synthesized)
+    elif isinstance(value, Decimal):
+        return UntrustedDecimal(value, synthesized=synthesized)
+    elif isinstance(value, str) or isinstance(value, UserString):
+        return UntrustedStr(value, synthesized=synthesized)
+    #####################################################
+    # TODO: Add more casting here for new untrusted types
+    #####################################################
+    # TODO: We may consider a generic Untrusted type,
+    #  instead of returning a trusted value.
+    else:
+        return value
 
+
+def add_synthesis(func):
+    """A function decorator that makes the original function
+    (that are not synthesis-aware) return Untrusted values."""
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         res = func(*args, **kwargs)
         if res is NotImplemented:
@@ -71,34 +99,62 @@ def add_synthesis(func):
         for key, value in kwargs.items():
             if issubclass(type(value), UntrustedMixin):
                 synthesized = synthesized or value.synthesized
-
-        if isinstance(res, UntrustedMixin):
-            # If res is already an Untrusted type (e.g., in UserStr inheritance uses
-            # self.__class__() to create UntrustedStr instead of UserStr or str
-            # class objects, but synthesized flag might not be set correctly!
-            res.synthesized = synthesized
-            return res
-        # boolean value is always bool (bool is not extensible)
-        # bool is a subclass of int, so we must check this first
-        elif isinstance(res, bool):
-            return res
-        elif isinstance(res, int):
-            return UntrustedInt(res, synthesized=synthesized)
-        elif isinstance(res, float):
-            return UntrustedFloat(res, synthesized=synthesized)
-        elif isinstance(res, Decimal):
-            return UntrustedDecimal(res, synthesized=synthesized)
-        elif isinstance(res, str) or isinstance(res, UserString):
-            return UntrustedStr(res, synthesized=synthesized)
-        #####################################################
-        # TODO: Add more casting here for new untrusted types
-        #####################################################
-        # TODO: We may consider a generic Untrusted type,
-        #  instead of returning a trusted value.
-        else:
-            return res
-
+        return to_untrusted(res, synthesized)
     return wrapper
+
+
+def untrustify(func):
+    """A function decorator that converts all trusted args and kwargs
+    to their untrusted version. Values that cannot be untrustified
+    will remain. This conversion always set the synthesized flag to False
+    unless the value is already untrusted and it has a True synthesized flag."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        args = list(args)
+        for i, arg in enumerate(args):
+            if isinstance(arg, UntrustedMixin):
+                args[i] = arg
+            else:
+                args[i] = to_untrusted(arg, synthesized=False)
+        kwargs = dict(kwargs)
+        for key, value in kwargs.items():
+            if isinstance(value, UntrustedMixin):
+                kwargs[key] = value
+            else:
+                kwargs[key] = to_untrusted(value, synthesized=False)
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def synthesis_check(func, warn):
+    """A function decorator factory which builds various function decorator
+    depends on warn parameter. Overall it checks if a synthesized value is
+    returned from the original func. If warn is True, only warning is output;
+    otherwise, ValueError is raised."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        synthesized = False
+        res = func(*args, **kwargs)
+        if isinstance(res, UntrustedMixin):
+            synthesized = res.synthesized
+        if not synthesized:
+            return res
+        else:
+            if warn:
+                warnings.warn("Synthesized value output by {func} "
+                              "might be used unintentionally".format(func=func.__name__),
+                              category=RuntimeWarning,
+                              stacklevel=2)
+                return res
+            else:
+                raise RuntimeError("Synthesized value output by {func} "
+                                   "should not be used at all".format(func=func.__name__))
+    return wrapper
+
+
+# Actual decorators manufactured by the synthesis_check decorator factory
+synthesis_warning = functools.partial(synthesis_check, warn=True)
+synthesis_error = functools.partial(synthesis_check, warn=False)
 
 
 def add_synthesis_to_func(cls):
@@ -213,14 +269,14 @@ class UntrustedMixin(object):
     # TODO: While str() calls __str__, so does print(). Therefore, while it makes sense
     #  to stop str() from conversion if input is synthesized, we cannot use it until we
     #  remove all print() statements on synthesized values.
-    def __str__(self):
-        """Whenever str() is called on an untrusted object for conversion, check
-        the synthesized flag before conversion. This is safe conversion but
-        conversion may still fail if the input to str() cannot be converted to a str."""
-        if self.synthesized:
-            raise RuntimeError("cannot convert a synthesized value to a trusted str value")
-        else:
-            return super().__str__()
+    # def __str__(self):
+    #     """Whenever str() is called on an untrusted object for conversion, check
+    #     the synthesized flag before conversion. This is safe conversion but
+    #     conversion may still fail if the input to str() cannot be converted to a str."""
+    #     if self.synthesized:
+    #         raise RuntimeError("cannot convert a synthesized value to a trusted str value")
+    #     else:
+    #         return super().__str__()
 
     @property
     def synthesized(self):

@@ -1,5 +1,6 @@
 """Binary search tree and synthesizable BST"""
 from django.splice.synthesis import init_synthesizer
+from django.splice.structs import BaseSynthesizableStruct
 
 
 class BiNode(object):
@@ -49,7 +50,8 @@ class BiNode(object):
 
 class BinarySearchTree(object):
     """BST using BiNode."""
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.root = None
 
     def insert(self, val, key=None):
@@ -97,6 +99,8 @@ class BinarySearchTree(object):
         returns the value for a given key if the key exists.
         Otherwise, return None."""
         n = self.find(key)
+        if not n:
+            return None
         return n.val
 
     def find(self, key_or_val):
@@ -225,8 +229,14 @@ class BinarySearchTree(object):
         return printout
 
 
-class SynthesizableBST(BinarySearchTree):
+class SynthesizableBST(BinarySearchTree, BaseSynthesizableStruct):
     """The synthesizable version of binary search tree"""
+    def save(self, val=None, key=None):
+        """BaseSynthesizableStruct enforces implementation of
+        this method. This is the public-facing interface to
+        store data into SynthesizableBST."""
+        self.insert(val=val, key=key)
+
     def synthesize(self, node):
         """Synthesize the val (or key if exists) of a node.
         Only performs bounded value synthesis if both upper
@@ -264,31 +274,30 @@ class SynthesizableBST(BinarySearchTree):
         else:
             if node.key:
                 node.key = synthesized_value
-                node.val = None
+                # The val will have its synthesized flag set
+                node.val.synthesized = True
             else:
                 node.val = synthesized_value
         return True
 
 
 if __name__ == "__main__":
-    from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
+    bst = SynthesizableBST()
+    bst.save(key="Jake", val=7)
+    bst.save(key="Blair", val=5)
+    bst.save(key="Luke", val=14)
+    bst.save(key="Andre", val=9)
+    bst.save(key="Zack", val=12)
+    print("Flattened key-value tree (before synthesis): {}".format(str(bst)))
+    print("Synthesizing root node success: {}".format(bst.synthesize(bst.root)))
+    print("Flattened key-value tree (after synthesis): {}".format(str(bst)))
 
     bst = SynthesizableBST()
-    bst.insert(UntrustedStr("Jake"), UntrustedInt(7))
-    bst.insert(UntrustedStr("Blair"), UntrustedInt(5))
-    bst.insert(UntrustedStr("Luke"), UntrustedInt(14))
-    bst.insert(UntrustedStr("Andre"), UntrustedInt(9))
-    bst.insert(UntrustedStr("Zack"), UntrustedInt(12))
-    print(str(bst))
-    print(bst.synthesize(bst.root))
-    print(str(bst))
-
-    bst = SynthesizableBST()
-    bst.insert(UntrustedStr("Jake"))
-    bst.insert(UntrustedStr("Blair"))
-    bst.insert(UntrustedStr("Luke"))
-    bst.insert(UntrustedStr("Andre"))
-    bst.insert(UntrustedStr("Zack"))
-    print(str(bst))
-    print(bst.synthesize(bst.root))
-    print(str(bst))
+    bst.save(val="Jake")
+    bst.save(val="Blair")
+    bst.save(val="Luke")
+    bst.save(val="Andre")
+    bst.save(val="Zack")
+    print("Flattened value-only tree (before synthesis): {}".format(str(bst)))
+    print("Synthesizing root node success: {}".format(bst.synthesize(bst.root)))
+    print("Flattened value-only tree (after synthesis): {}".format(str(bst)))
