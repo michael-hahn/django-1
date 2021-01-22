@@ -77,16 +77,30 @@ def to_untrusted(value, synthesized):
     #####################################################
     # TODO: Add more casting here for new untrusted types
     #####################################################
-    # recursively convert values in list or other structured data
+    # Recursively convert values in list or other structured data
+    # Note that we cannot use list/dict/set comprehension because
+    # we do not want this function to create a new object (which
+    # will not work well with recursion!
     elif isinstance(value, list):
-        return [to_untrusted(v, synthesized) for v in value]
+        for i in range(len(value)):
+            value[i] = to_untrusted(value[i], synthesized)
+        return value
     elif isinstance(value, tuple):
+        # Creating a new tuple is fine because tuple is immutable anyways
         return tuple(to_untrusted(v, synthesized) for v in value)
     elif isinstance(value, set):
-        return {to_untrusted(v, synthesized) for v in value}
+        list_copy = []
+        for v in value:
+            list_copy.append(to_untrusted(v, synthesized))
+        value.clear()
+        value.update(list_copy)
+        return value
     elif isinstance(value, dict):
-        return {to_untrusted(k, synthesized): to_untrusted(v, synthesized)
-                for k, v in value.items()}
+        untrusted_dict = {to_untrusted(k, synthesized): to_untrusted(v, synthesized)
+                          for k, v in value.items()}
+        value.clear()
+        value.update(untrusted_dict)
+        return value
     # TODO: We may consider a generic Untrusted type,
     #  instead of returning a trusted value.
     else:
