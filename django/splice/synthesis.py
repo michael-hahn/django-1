@@ -501,7 +501,7 @@ def init_synthesizer(value, vectorized=False):
                                   "{type}. Consider vectorization.".format(type=type(value)))
 
 
-if __name__ == "__main__":
+def int_synthesizer_test():
     synthesizer = IntSynthesizer()
     int_val = synthesizer.bounded_synthesis(upper_bound=92, lower_bound=7)
     assert int_val > 7, "{val} should be larger than 7, but it is not.".format(val=int_val)
@@ -529,10 +529,12 @@ if __name__ == "__main__":
         return x + y * y
 
     synthesizer.reset_constraints()
-    synthesizer.eq_constraint(calc, 40, y=5)   # y is a keyed argument
+    synthesizer.eq_constraint(calc, 40, y=5)  # y is a keyed argument
     int_val = synthesizer.to_python(synthesizer.value)
     assert int_val == 15, "{val} should be equal to 15, but it is not.".format(val=int_val)
 
+
+def float_synthesizer_test():
     synthesizer = FloatSynthesizer()
     float_val = synthesizer.bounded_synthesis(upper_bound=92.6, lower_bound=33.8)
     assert float_val > 33.8, "{val} should be larger than 33.8, but it is not.".format(val=float_val)
@@ -547,6 +549,8 @@ if __name__ == "__main__":
     assert float_val > 21.45, "{val} should be larger than 21.45, but it is not.".format(val=float_val)
     synthesizer.reset_constraints()
 
+
+def str_synthesizer_test():
     synthesizer = StrSynthesizer()
     synthesizer.lt_constraint("A")
     str_val = synthesizer.to_python(synthesizer.value)
@@ -612,8 +616,10 @@ if __name__ == "__main__":
                                                                              val=untrusted_str)
     assert str_val.synthesized, "{val} should be synthesized.".format(val=str_val)
 
+
+def bitvec_synthesizer_test():
     synthesizer = BitVecSynthesizer()
-    synthesizer.gt_constraint(43)   # BitVec supports base class >
+    synthesizer.gt_constraint(43)  # BitVec supports base class >
     bitvec_val = synthesizer.to_python(synthesizer.value)
     assert bitvec_val > 43, "{val} should be larger than 43, but it is not.".format(val=bitvec_val)
     synthesizer.reset_constraints()
@@ -635,3 +641,10 @@ if __name__ == "__main__":
     synthesizer.eq_constraint(shr32, 0x3E345C, n=2)
     bitvec_val = synthesizer.to_python(synthesizer.value)
     assert shr32(bitvec_val, n=2) == 0x3E345C
+
+
+if __name__ == "__main__":
+    int_synthesizer_test()
+    float_synthesizer_test()
+    str_synthesizer_test()
+    bitvec_synthesizer_test()
