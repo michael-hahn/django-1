@@ -1,7 +1,7 @@
 """In-memory data structure high-level interface"""
 from abc import ABC, abstractmethod
 
-from django.splice.untrustedtypes import synthesis_error, synthesis_warning, untrustify
+from django.splice.untrustedtypes import synthesis_error, untrustify
 
 
 class BaseSynthesizableStruct(ABC):
@@ -12,25 +12,32 @@ class BaseSynthesizableStruct(ABC):
         super().__init__(*args, **kwargs)
 
     def __init_subclass__(cls, **kwargs):
-        """This is used to automatically decorate all subclasses having
-        get() and peak() functions with synthesis_error and synthesis_warning,
-        respectively and save() and synthesize() with untrustify."""
+        """This is used to automatically decorate all subclasses
+         function with untrustify and the synthesis_warning."""
         super().__init_subclass__(**kwargs)
-        get_func = getattr(cls, 'get', None)
-        peek_func = getattr(cls, 'peek', None)
-        save_func = getattr(cls, 'save', None)
-        delete_func = getattr(cls, 'delete', None)
-        synthesize_func = getattr(cls, 'synthesize', None)
-        if get_func:
-            setattr(cls, 'get', synthesis_error(get_func))
-        if peek_func:
-            setattr(cls, 'peek', synthesis_warning(peek_func))
-        if save_func:
-            setattr(cls, 'save', untrustify(save_func))
-        if delete_func:
-            setattr(cls, 'delete', untrustify(delete_func))
-        if synthesize_func:
-            setattr(cls, 'synthesize', untrustify(synthesize_func))
+        decorated_funcs = set()
+        # We can interested in decorating callable, non-dunder functions
+        # It is unlikely that data structures uses dunder methods except
+        # maybe __getitem__, __setitem__, and __delitem__.
+        for c in cls.__mro__:
+            for key, value in c.__dict__.items():
+                if not callable(value) or key.startswith("__") or key in decorated_funcs:
+                    continue
+                setattr(c, key, synthesis_error(untrustify(value)))
+                decorated_funcs.add(key)
+        # Special cases not handled above
+        get_dunder = getattr(cls, "__getitem__", None)
+        set_dunder = getattr(cls, "__setitem__", None)
+        del_dunder = getattr(cls, "__delitem__", None)
+        if get_dunder:
+            setattr(cls, "__getitem__", synthesis_error(untrustify(get_dunder)))
+        if set_dunder:
+            setattr(cls, "__setitem__", synthesis_error(untrustify(set_dunder)))
+        if del_dunder:
+            setattr(cls, "__delitem__", synthesis_error(untrustify(del_dunder)))
+        #############################################
+        # TODO: Add more special cases here if needed
+        #############################################
 
     @abstractmethod
     def save(self, **kwargs):
