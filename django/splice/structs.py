@@ -1,7 +1,7 @@
 """In-memory data structure high-level interface"""
 from abc import ABC, abstractmethod
 
-from django.splice.untrustedtypes import synthesis_error, untrustify
+from django.splice.untrustedtypes import untrustify
 
 
 class BaseSynthesizableStruct(ABC):
@@ -13,7 +13,7 @@ class BaseSynthesizableStruct(ABC):
 
     def __init_subclass__(cls, **kwargs):
         """This is used to automatically decorate all subclasses
-         function with untrustify and the synthesis_warning."""
+         function with untrustify."""
         super().__init_subclass__(**kwargs)
         decorated_funcs = set()
         # We can interested in decorating callable, non-dunder functions
@@ -23,18 +23,18 @@ class BaseSynthesizableStruct(ABC):
             for key, value in c.__dict__.items():
                 if not callable(value) or key.startswith("__") or key in decorated_funcs:
                     continue
-                setattr(c, key, synthesis_error(untrustify(value)))
+                setattr(c, key, untrustify(value))
                 decorated_funcs.add(key)
         # Special cases not handled above
         get_dunder = getattr(cls, "__getitem__", None)
         set_dunder = getattr(cls, "__setitem__", None)
         del_dunder = getattr(cls, "__delitem__", None)
         if get_dunder:
-            setattr(cls, "__getitem__", synthesis_error(untrustify(get_dunder)))
+            setattr(cls, "__getitem__", untrustify(get_dunder))
         if set_dunder:
-            setattr(cls, "__setitem__", synthesis_error(untrustify(set_dunder)))
+            setattr(cls, "__setitem__", untrustify(set_dunder))
         if del_dunder:
-            setattr(cls, "__delitem__", synthesis_error(untrustify(del_dunder)))
+            setattr(cls, "__delitem__", untrustify(del_dunder))
         #############################################
         # TODO: Add more special cases here if needed
         #############################################
