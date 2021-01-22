@@ -127,3 +127,11 @@ if __name__ == "__main__":
         print("sl[4] is synthesized. One should not try to get its value.")
     sl.delete(6)
     print("SortedList (after deleting 6): {}".format(sl))
+    sl.update([45, 0, 13])
+    print("SortedList (after updating with 45, 0, 13): {}".format(sl))
+    for i in range(len(sl)):
+        try:
+            print("* sl[{i}] = {value} (Synthesized: {synthesized})".format(i=i, value=sl.get(i),
+                                                                            synthesized=sl.get(i).synthesized))
+        except RuntimeError as e:
+            print("* sl[{i}] is synthesized.".format(i=i))
