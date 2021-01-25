@@ -46,8 +46,8 @@ def synthesis_debug(func):
         cls_name = get_class(func).__name__
         res = func(*args, **kwargs)
         res_type = type(res).__name__
-        print("{func} (in class: {cls}) -> ({type}) {res}".format(func=func_name, cls=cls_name,
-                                                                  type=res_type, res=res))
+        print("[SYNTHESIS DEBUG] {func} (in class: {cls}) -> ({type}) {res}".format(func=func_name, cls=cls_name,
+                                                                                    type=res_type, res=res))
         return res
 
     return wrapper
@@ -424,6 +424,18 @@ class UntrustedStr(UntrustedMixin, UserString):
         the default or the user-provided hash function."""
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
+
+
+class UntrustedObject(UntrustedMixin):
+    """To convert objects that cannot use other trusted types.
+     Subclass only UntrustedMixin to add the untrusted feature."""
+    def __init__(self, obj, *, synthesized=False):
+        super().__init__(synthesized)
+        self._obj = obj
+
+    @property
+    def object(self):
+        return self._obj
 
 
 def untrusted_int_test():
