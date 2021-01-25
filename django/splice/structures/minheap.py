@@ -10,18 +10,32 @@ class SynthesizableMinHeap(BaseSynthesizableStruct):
     all k, counting elements from 0. For the sake of comparison, non-existing
     elements are considered to be infinite.  The interesting property of a
     heap is that a[0] is always its smallest element. See docstring from heapq.py."""
-    def __init__(self, initial=[], *args, **kwargs):
+    def __init__(self, initial=None, *args, **kwargs):
         """Defaults to an empty heap. Initial can also be
-        a list, which could be transformed into a heap."""
+        a list, which could be transformed into a heap.
+
+        'initial' should not be a mutable default value, because:
+        https://stackoverflow.com/a/40750485/9632613."""
         super().__init__(*args, **kwargs)
+        if not initial:
+            initial = list()
         self._heap = initial
         heapq.heapify(self._heap)
 
-    def save(self, item):
+    def __save__(self, cleaned_data):
         """Insert item into the heap while maintaining heap invariance.
         BaseSynthesizableStruct enforces implementation of this method.
-        This is the public-facing interface to store data into SynthesizableMinHeap."""
-        heapq.heappush(self._heap, item)
+        A subclass of this class can also override this method for a
+        customized store.
+
+        The default behavior is that cleaned_data contains only one element
+        and this element is to be inserted into the min heap."""
+        if len(cleaned_data) > 1:
+            raise ValueError("By default, only one value can be inserted "
+                             "at a time using save(). You may want to override"
+                             "__save__() for customized insertion.")
+        for key, value in cleaned_data.items():
+            heapq.heappush(self._heap, value)
 
     def delete(self):
         """Pop the smallest item off the heap, while maintaining heap invariant.
@@ -124,34 +138,40 @@ class SynthesizableMinHeap(BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    mh = SynthesizableMinHeap()
-    mh.save(4)
-    mh.save(3)
-    mh.save(5)
-    mh.save(12)
-    mh.save(5)
-    mh.save(7)
-    mh.save(1)
+    from django.forms.fields import CharField, IntegerField
+
+    class NumberMinHeap(SynthesizableMinHeap):
+        """A min heap of numbers (integers)."""
+        num = IntegerField()
+
+    mh = NumberMinHeap()
+    mh.save(num=4)
+    mh.save(num=3)
+    mh.save(num=5)
+    mh.save(num=12)
+    mh.save(num=5)
+    mh.save(num=7)
+    mh.save(num=1)
     print("Initial int min heap:\n{mh}".format(mh=mh))
     print("Before synthesizing min, we can get min value: {min}".format(min=mh.get()))
     mh.synthesize(0)
     print("After synthesizing min:\n{mh}".format(mh=mh))
-    print("Now if we try to get min value:")
-    try:
-        min_value = mh.get()
-    except RuntimeError as e:
-        print("* min value is synthesized")
+    print("Now if we get min value: {min}".format(min=mh.get()))
     mh.synthesize(2)
     print("After synthesizing an intermediate value:\n{mh}".format(mh=mh))
 
-    mh.clear()
-    mh.save("Jake")
-    mh.save("Blair")
-    mh.save("Luke")
-    mh.save("Andre")
-    mh.save("Zack")
-    mh.save("Tommy")
-    mh.save("Sandra")
+    class NameMinHeap(SynthesizableMinHeap):
+        """A min heap of names (characters)."""
+        name = CharField()
+
+    mh = NameMinHeap()
+    mh.save(name="Jake")
+    mh.save(name="Blair")
+    mh.save(name="Luke")
+    mh.save(name="Andre")
+    mh.save(name="Zack")
+    mh.save(name="Tommy")
+    mh.save(name="Sandra")
     print("Initial str min heap:\n{mh}".format(mh=mh))
     mh.delete()
     print("After popping the min value:\n{mh}".format(mh=mh))

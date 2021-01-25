@@ -5,7 +5,7 @@ from django.splice.synthesis import init_synthesizer
 from django.splice.structs import BaseSynthesizableStruct
 
 
-class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
+class SynthesizableSortedList(BaseSynthesizableStruct, SortedList):
     """Inherit from SortedList to create a custom sorted list
     that behaves exactly like a sorted list (with elements sorted
     in the list) but the elements in the SynthesizableSortedList
@@ -68,11 +68,18 @@ class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
         self.__setitem__(index, synthesized_value)
         return True
 
-    def save(self, value):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        store data into SynthesizableSortedList."""
-        self.add(value)
+    def __save__(self, cleaned_data):
+        """BaseSynthesizableStruct enforces implementation of this method. A
+        subclass of this class can also override this method for a customized store.
+
+        The default behavior is that cleaned_data contains only one element
+        and this element is to be inserted into the sorted list."""
+        if len(cleaned_data) > 1:
+            raise ValueError("By default, only one value can be inserted "
+                             "at a time using save(). You may want to override"
+                             "__save__() for customized insertion.")
+        for key, value in cleaned_data.items():
+            self.add(value)
 
     def get(self, idx):
         """BaseSynthesizableStruct enforces implementation of
@@ -88,50 +95,55 @@ class SynthesizableSortedList(SortedList, BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    sl = SynthesizableSortedList()
-    sl.save("Jake")
-    sl.save("Blair")
-    sl.save("Luke")
-    sl.save("Andre")
-    sl.save("Zack")
-    print("SortedList: {}".format(sl))
-    sl.synthesize(2)
-    print("SortedList (after synthesizing Jake): {}".format(sl))
-    sl.synthesize(0)
-    print("SortedList (after synthesizing Andre): {}".format(sl))
-    sl.synthesize(4)
-    print("SortedList (after synthesizing Zack): {}".format(sl))
-    print("sl[1] = {value}".format(value=sl.get(1)))
-    try:
-        print("sl[2] = {value}".format(value=sl.get(2)))
-    except RuntimeError as e:
-        print("sl[2] is synthesized. One should not try to get its value.")
+    from django.forms.fields import CharField, IntegerField
 
-    sl = SynthesizableSortedList()
-    sl.save(7)
-    sl.save(5)
-    sl.save(14)
-    sl.save(9)
-    sl.save(12)
-    print("SortedList: {}".format(sl))
-    sl.synthesize(2)
-    print("SortedList (after synthesizing 9): {}".format(sl))
-    sl.synthesize(0)
-    print("SortedList (after synthesizing 5): {}".format(sl))
-    sl.synthesize(4)
-    print("SortedList (after synthesizing 14): {}".format(sl))
-    print("sl[3] = {value}".format(value=sl.get(3)))
+    class NameSortedList(SynthesizableSortedList):
+        """A sorted list of names (characters)."""
+        name = CharField()
+
+    nsl = NameSortedList()
+    nsl.save(name="Jake")
+    nsl.save(name="Blair")
+    nsl.save(name="Luke")
+    nsl.save(name="Andre")
+    nsl.save(name="Zack")
+    print("NameSortedList: {}".format(nsl))
+    nsl.synthesize(2)
+    print("NameSortedList (after synthesizing Jake): {}".format(nsl))
+    nsl.synthesize(0)
+    print("NameSortedList (after synthesizing Andre): {}".format(nsl))
+    nsl.synthesize(4)
+    print("NameSortedList (after synthesizing Zack): {}".format(nsl))
+    print("nsl[1] = {value}".format(value=nsl.get(1)))
     try:
-        print("sl[4] = {value}".format(value=sl.get(4)))
+        print("nsl[2] = {value}".format(value=nsl.get(2)))
     except RuntimeError as e:
-        print("sl[4] is synthesized. One should not try to get its value.")
-    sl.delete(6)
-    print("SortedList (after deleting 6): {}".format(sl))
-    sl.update([45, 0, 13])
-    print("SortedList (after updating with 45, 0, 13): {}".format(sl))
-    for i in range(len(sl)):
-        try:
-            print("* sl[{i}] = {value} (Synthesized: {synthesized})".format(i=i, value=sl.get(i),
-                                                                            synthesized=sl.get(i).synthesized))
-        except RuntimeError as e:
-            print("* sl[{i}] is synthesized.".format(i=i))
+        print("nsl[2] is synthesized. One should not try to get its value.")
+
+
+    class NumberSortedList(SynthesizableSortedList):
+        """A sorted list of numbers (integers)."""
+        num = IntegerField()
+
+    nsl = NumberSortedList()
+    nsl.save(num=7)
+    nsl.save(num=5)
+    nsl.save(num=14)
+    nsl.save(num=9)
+    nsl.save(num=12)
+    print("NumberSortedList: {}".format(nsl))
+    nsl.synthesize(2)
+    print("NumberSortedList (after synthesizing 9): {}".format(nsl))
+    nsl.synthesize(0)
+    print("NumberSortedList (after synthesizing 5): {}".format(nsl))
+    nsl.synthesize(4)
+    print("NumberSortedList (after synthesizing 14): {}".format(nsl))
+    print("nsl[3] = {value}".format(value=nsl.get(3)))
+    print("nsl[4] = {value}".format(value=nsl.get(4)))
+    nsl.delete(6)
+    print("NumberSortedList (after deleting 6): {}".format(nsl))
+    nsl.update([45, 0, 13])
+    print("NumberSortedList (after updating with 45, 0, 13): {}".format(nsl))
+    for i in range(len(nsl)):
+        print("* nsl[{i}] = {value} (Synthesized: {synthesized})".format(i=i, value=nsl.get(i),
+                                                                         synthesized=nsl.get(i).synthesized))

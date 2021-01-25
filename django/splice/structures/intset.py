@@ -194,7 +194,17 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
     though we implemented it ourselves) because we want to
     highlight the changes that must be done to make IntSet
     synthesizable (and that its unique encoding design
-    makes synthesis different from, e.g., a sorted list)."""
+    makes synthesis different from, e.g., a sorted list).
+
+    Here we inherit IntSet before BaseSynthesizableStruct so
+    that we do not need to reimplement methods like delete()
+    in SynthesizableIntSet (since it can be inherited from
+    IntSet). If we inherit BaseSynthesizableStruct first, we
+    will have to implement them again (since BaseSynthesizableStruct
+    won't find their implementation). We can inherit
+    BaseSynthesizableStruct second because IntSet's __init__
+    calls super() (and is multi-inheritance aware), while
+    SortedList is not!"""
     def __getitem__(self, pos, encoding):
         """Override the superclass __getitem__ method
         because we must return an UntrustedInt instead of
@@ -228,11 +238,19 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
         for i in range(pos*encoding, (pos+1)*encoding):
             self._contents[i] = byte_arr[i-pos*encoding]
 
-    def save(self, value):
+    def __save__(self, cleaned_data):
         """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        store data into SynthesizableIntSet."""
-        return self.add(value=value)
+        this method. A subclass of this class can also override
+        this method for a customized store.
+
+        The default behavior is that cleaned_data contains only one element
+        and this element is to be inserted into the intSet."""
+        if len(cleaned_data) > 1:
+            raise ValueError("By default, only one value can be inserted "
+                             "at a time using save(). You may want to override"
+                             "__save__() for customized insertion.")
+        for key, value in cleaned_data.items():
+            self.add(value=value)
 
     def synthesize(self, pos):
         """Synthesize a new value at pos (of intSet) without invalidating ordered-set
@@ -278,22 +296,28 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    int_set = SynthesizableIntSet()
-    int_set.save(5)
-    int_set.save(30)
-    int_set.save(-7)
-    int_set.save(14)
-    int_set.save(5)
+    from django.forms.fields import IntegerField
+
+    class NumberIntSet(SynthesizableIntSet):
+        """An InSet of numbers (integers)."""
+        num = IntegerField()
+
+    int_set = NumberIntSet()
+    int_set.save(num=5)
+    int_set.save(num=30)
+    int_set.save(num=-7)
+    int_set.save(num=14)
+    int_set.save(num=5)
     # We should not have access to _contents but it is OK for testing
     print("intSet: {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(35267)
+    int_set.save(num=35267)
     # We expect the intSet to take more space now (int16 -> int32)
     print("intSet (after inserting 35267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(2_447_483_647)
+    int_set.save(num=2_447_483_647)
     # We expect the intSet to take even more space now (int32 -> int64)
     print("intSet (after inserting 2,447,483,647): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(-335267)
-    int_set.save(-2_447_483_747)
+    int_set.save(num=-335267)
+    int_set.save(num=-2_447_483_747)
     print("intSet (after inserting -335267 and -2,447,483,747): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
     print("45 is in the set: {}".format(int_set.find(45)))
     print("35267 is in the set: {}".format(int_set.find(35267)))
@@ -318,10 +342,10 @@ if __name__ == "__main__":
     int_set.synthesize(4)
     print("intSet (after synthesizing 35267): {set} ({bytes} bytes)".format(set=int_set,
                                                                             bytes=len(int_set._contents)))
-    print("Getting element from intSet through get():")
+    print("Getting all elements from intSet through get():")
     for i in range(len(int_set)):
-        try:
-            value = int_set.get(i)
-            print("* {value} is a valid value in the intSet".format(value=value))
-        except RuntimeError as e:
-            print("* {i}th element in the intSet is synthesized so there is no point getting it".format(i=i))
+        value = int_set.get(i)
+        print("* int_set[{i}] = {value} (Synthesized: {synthesized}) "
+              "is a valid value in the intSet".format(i=i,
+                                                      value=value,
+                                                      synthesized=value.synthesized))
