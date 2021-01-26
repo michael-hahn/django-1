@@ -415,23 +415,23 @@ class BaseForm:
         is complete.
 
         In a regular form, this step is to check that all data in cleaned_data
-        is of Untrusted types and then convert them into regular types.
+        is of Untrusted types and then convert them into regular (trusted) types.
         """
-        # Accumulate errors to call self.add_error() since
-        # self.add_error() modifies self.cleaned_data and
-        # therefore cannot be called during the iteration.
+        # We do not accumulate errors (call self.add_error())
+        # because self.add_error() modifies self.cleaned_data
+        # and therefore cannot be called during the iteration.
+        # Thus, we immediately raise ValidationError().
         for name, value in self.cleaned_data.items():
             if not isinstance(value, UntrustedMixin):
-                raise ValidationError(_("{name} has value {value} of trusted type {type}'"
+                raise ValidationError(_("{name} has value {value} of (trusted) type {type}'"
                                         .format(name=name, value=value, type=type(value))))
             else:
-                # IMPORTANT NOTE ###############################################
-                # TODO: We assume that the trusted class is the last base class
-                #  of the corresponding Untrusted type, but this assumption may
-                #  change later. Perhaps a better conversion approach is needed.
-                ################################################################
-                trusted_class = type(value).__bases__[-1]
-                self.cleaned_data[name] = trusted_class(value)
+                #  NOTE: to_trusted() 'force' flag is False and it
+                #  is OK because we will never need to forcefully
+                #  convert an untrusted (and synthesized) value to
+                #  its trusted type since value at this step will
+                #  never be a synthesized value (i.e., always from user)
+                self.cleaned_data[name] = value.to_trusted()
 
     def clean(self):
         """
