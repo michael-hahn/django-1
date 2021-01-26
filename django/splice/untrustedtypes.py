@@ -212,49 +212,68 @@ def add_synthesis_to_func(cls):
     some base classes, then we want functions in base class to be
     synthesis-aware as well.
 
-    Important note: Any cls (UntrustedX) function to be decorated must
-    start with either "synthesis_" or "_synthesis_" (for protected
+    Important note: Any cls (UntrustedX only) function to be decorated
+    must start with either "synthesis_" or "_synthesis_" (for protected
     methods), while base class functions have no such restriction
     (since it is likely that developers have no control over the
     base class). Using this convention, developers can prevent
     base class functions from being decorated by overriding the
-    function (and just calling base class function). If, for example,
-    the developer needs to override a dunder function, and the
-    overridden function needs to be decorated, they should first
+    function (and just calling base class function in the override).
+    If, for example, the developer needs to override a dunder function,
+    and the overridden function needs to be decorated, they should first
     implement a helper function '_synthesize__dunder__' and then
     call the helper function in the dunder function. As such,
     _synthesize__dunder__ will be decorated (and therefore the
     calling dunder function)."""
-    # set of function names already been decorated/inspected
+    # set of callable function names already been decorated/inspected
     handled_funcs = set()
     # First handle all functions in cls class
-    for key, value in cls.__dict__.items():
+    # TODO: (non-urgent) __dict__ does not return __slots__
+    #  so will not work if cls uses __slots__ instead of __dict__
+    # NOTE: Do NOT use __dict__[key] to test callable(), use getattr() instead. Not because
+    # of performance, but for more important reasons! For example, callable(__dict__["__new__"])
+    # returns False because it is a class method (in fact, all static and class methods will
+    # return False if use __dict__ instead of getattr() to obtain the function!
+    # Reference:
+    # https://stackoverflow.com/questions/14084897/getattr-versus-dict-lookup-which-is-faster
+    for key in cls.__dict__:
         # Only callable functions are decorated
+        value = getattr(cls, key)
         if not callable(value):
             continue
         # All callable functions are inspected in cls
         handled_funcs.add(key)
+        # Decorate only 'synthesis_' or '_synthesis_' prefixed functions in cls
         if key.startswith("synthesis_") or key.startswith("_synthesis_"):
             setattr(cls, key, add_synthesis(value))
+
     # Handle base class functions if exists. Base classes are
     # unlikely to follow our synthesis naming convention.
-    # However, some dunder methods clearly should *not* be
-    # decorated, we will add them in handled_funcs. Non-decorated
-    # methods will follow the traditional MRO calling order!
-    # Some functions added to handled_funcs can be more subtle:
-    # * __int__: This dunder method is called during int().
-    #            If int() is called, we should not decorate it
-    #            but actually returns an int typed value (after
-    #            checking that conversion is allowed if calling
-    #            int() on untrusted types.
-    # * __float__: Follow the same reason as in __int__.
-    handled_funcs.update({'__dict__', '__module__', '__doc__', '__repr__',
-                          '__getattribute__', '__str__', '__new__', '__format__',
-                          '__int__', '__float__'})
-    # __mro__ defines the list of *ordered* base classes (the first being cls and
-    # the second being UntrustedMixin; UntrustedMixin should *not* be decorated)
+    # However, some __dunder__ methods clearly should *not* be
+    # decorated, even if they are callable, we will add them
+    # in handled_funcs. Non-decorated methods will follow the
+    # traditional MRO calling order!
+    # Note that __dict__, __module__, __doc__ are not callable
+    # so they will not be decorated in the first place.
+    handled_funcs.update({'__repr__',
+                          '__getattribute__',
+                          '__new__',
+                          '__format__',
+                          '__class__',
+                          })
+    # __mro__ defines the list of *ordered* base classes
+    # (the first being cls and the second being UntrustedMixin).
+    # UntrustedMixin should *not* be decorated, add all of its callable functions in handled_funcs
+    mixin_cls = cls.__mro__[1]      # IMPORTANT: UntrustedMixin MUST be the first parent class!
+    for key in mixin_cls.__dict__:
+        value = getattr(mixin_cls, key)
+        if not callable(value):
+            continue
+        handled_funcs.add(key)
+    # Handle the remaining base classes
     for base in cls.__mro__[2:]:
-        for key, value in base.__dict__.items():
+        for key in base.__dict__:
+            value = getattr(base, key)
             # Only callable functions that are not handled by previous classes
             if not callable(value) or key in handled_funcs:
                 continue
@@ -270,6 +289,12 @@ def add_synthesis_to_func(cls):
             # will be placed at the top of the MRO), not the one
             # in any of the superclasses!
             setattr(cls, key, add_synthesis(value))
+    # NOTE: Function calling order (when called fom an UntrustedX object) --
+    # 1. Original cls (UntrustedX) functions (decorated and non-decorated) and
+    #    all decorated functions (including functions from all base classes).
+    # 2. All functions defined in UntrustedMixin.
+    # 3. All other non-decorated functions from classes other than UntrustedX
+    #    and UntrustedMixin follow the original MRO.
     return cls
 
 
@@ -297,35 +322,72 @@ class UntrustedMixin(object):
         super().__init_subclass__(**kwargs)
         add_synthesis_to_func(cls)
 
-    def __int__(self):
-        """Whenever int() is called on an untrusted object for conversion, check
-        the synthesized flag before conversion. This is safe conversion but
-        conversion may still fail if the input to int() cannot be converted to an int."""
-        if self.synthesized:
-            raise RuntimeError("cannot convert a synthesized value to a trusted int value")
-        else:
+    #  We comment out the following code, and use add_synthesis_to_func() to decorate
+    #  __int__ instead. But here is the trade-off:
+    #  1. If we use add_synthesis_to_func(), __int__ will still return UntrustedInt
+    #     type and if the value is synthesized the returned value will also be synthesized;
+    #     if we use the method below and if the original value is synthesized, we
+    #     will receive a RuntimeError.
+    #  2. However, if we use add_synthesis_to_func(), int() will cast both synthesized
+    #     untrusted but non-synthesized value to int(), but if we use the method below,
+    #     we will at least receive a RuntimeError.
+    #  However, since developers should always use to_trusted() instead of explicit
+    #  casting, we decide to use add_synthesis_to_func() like most other methods.
+    # @add_synthesis
+    # def __int__(self):
+        """__int__ will not be decorated in add_synthesis_to_func() since we override
+        it here. We re-decorate using @add_synthesis. We do this, instead of
+        decorating __int__ directly in add_synthesis_to_func(), because
+        1. Decorating __int__ does not change the fact that int() will ALWAYS
+           returns an instance of EXACT int (reference:
+           https://hg.python.org/cpython/rev/81f229262921). This is decided by
+           CPython and cannot be changed at this level.
+        2. Because of 1. the most we can do is to raise an error if int()
+           conversion is performed on not just untrusted but synthesized value.
+        3. We cannot do 2. if we decorate __int__ in add_synthesis_to_func().
+        4. We use @add_synthesis to decorate __int__ here so that __int__() call
+           still return UntrustedInt, but not int.
+        This is safe conversion but conversion may still fail if the input to int()
+        cannot be converted to an int."""
+        #  if self.synthesized:
+        #     raise RuntimeError("cannot convert a synthesized value to a trusted int value")
+        # else:
+        #     return super().__int__()
+
+    #  We comment out the following code for the same reason as in __int__ above.
+    # @add_synthesis
+    # def __float__(self):
+        """__float__ is treated this way for the same reason as __int__ (see above).
+        float() cannot return an instance of a strict subclass of float. The ability
+        to return an instance of a strict subclass of float is deprecated (CPython).
+        This is safe conversion but conversion may still fail if the input to float()
+        cannot be converted to a float."""
+        # if self.synthesized:
+        #     raise RuntimeError("cannot convert a synthesized value to a trusted float value")
+        # else:
+        #     return super().__float__()
+
+    #  NOTE: Unlike __int__ and __float__, __str__ and str() return TypeError: __str__ returned
+    #  non-string (type UntrustedStr) if casting returns any other types than the built-in
+    #  string type (e.g., UntrustedStr). This is good as we do NOT want to allow casting from
+    #  UntrustedStr to str using str() or __str__; we want a more explicit casting call.
+    #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
+    #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
+    #  to cast UntrustedStr.
+
+    def to_trusted(self, forced=False):
+        """Convert a value to its corresponding trusted type. Conversion results in
+        a RuntimeError if the untrusted value is synthesized, unless 'forced' is set
+        to be True. If 'forced' is True, conversion always works. """
+        if self.synthesized and not forced:
+            raise RuntimeError("cannot convert a synthesized value to a trusted value")
+
+        if isinstance(self, UntrustedInt):
             return super().__int__()
-
-    def __float__(self):
-        """Whenever float() is called on an untrusted object for conversion, check
-        the synthesized flag before conversion. This is safe conversion but
-        conversion may still fail if the input to float() cannot be converted to a float."""
-        if self.synthesized:
-            raise RuntimeError("cannot convert a synthesized value to a trusted float value")
-        else:
+        elif isinstance(self, UntrustedFloat):
             return super().__float__()
-
-    # TODO: While str() calls __str__, so does print(). Therefore, while it makes sense
-    #  to stop str() from conversion if input is synthesized, we cannot use it until we
-    #  remove all print() statements on synthesized values.
-    # def __str__(self):
-    #     """Whenever str() is called on an untrusted object for conversion, check
-    #     the synthesized flag before conversion. This is safe conversion but
-    #     conversion may still fail if the input to str() cannot be converted to a str."""
-    #     if self.synthesized:
-    #         raise RuntimeError("cannot convert a synthesized value to a trusted str value")
-    #     else:
-    #         return super().__str__()
+        elif isinstance(self, UntrustedStr):
+            return super().__str__()
 
     @property
     def synthesized(self):
