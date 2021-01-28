@@ -169,7 +169,7 @@ class BinarySearchTree(object):
             curr.right_child = self._delete_node(curr.right_child, candidate.key)
         return curr
 
-    def _max_value_node(self, node):
+    def _max_value_child_node(self, node):
         """
         Return the node with the maximum key in a
         (sub)tree rooted at node. The maximum value
@@ -178,21 +178,21 @@ class BinarySearchTree(object):
         if node is None:
             return node
         if node.right_child:
-            return self._max_value_node(node.right_child)
+            return self._max_value_child_node(node.right_child)
         return node
 
-    def _max_value(self, node):
+    def _max_child_value(self, node):
         """
         Return the maximum key in a (sub)tree rooted at node.
         The maximum value is the node itself if it has no
-        right subtree. Return False if the node does not exist.
+        right subtree. Return None if the node does not exist.
         """
-        max_node = self._max_value_node(node)
+        max_node = self._max_value_child_node(node)
         if max_node is None:
-            return False
+            return None
         return max_node.key
 
-    def _min_value_node(self, node):
+    def _min_value_child_node(self, node):
         """
         Return the node with the minimum key in a
         (sub)tree rooted at node. The minimum value
@@ -201,24 +201,43 @@ class BinarySearchTree(object):
         if node is None:
             return node
         if node.left_child:
-            return self._min_value_node(node.left_child)
+            return self._min_value_child_node(node.left_child)
         else:
             return node
 
-    def _min_value(self, node):
+    def _min_child_value(self, node):
         """
         Return the minimum key in a (sub)tree rooted at node.
         The minimum value is the node itself if it has no
-        left subtree. Return False if the node does not exist.
+        left subtree. Return None if the node does not exist.
         """
-        min_node = self._min_value_node(node)
+        min_node = self._min_value_child_node(node)
         if min_node is None:
-            return False
+            return None
         return min_node.key
 
+    def _first_right_parent_value(self, node):
+        """Return the first parent node's value of a node that is to the right of the node."""
+        parent = node.parent
+        if parent is None:  # reach the root node
+            return None
+        if parent.left_child is node:
+            return parent.key
+        else:
+            return self._first_right_parent_value(parent)
+
+    def _first_left_parent_value(self, node):
+        """Return the first parent node's value of a node that is to the left of the node."""
+        parent = node.parent
+        if parent is None:  # reach the root node
+            return None
+        if parent.right_child is node:
+            return parent.key
+        else:
+            return self._first_left_parent_value(parent)
+
     def to_ordered_list(self, node, ordered_list):
-        """
-        Convert the tree into an in-ordered list of nodes. The list is stored in 'ordered_list'."""
+        """Convert the tree into an in-ordered list of nodes. The list is stored in 'ordered_list'."""
         if node is None:
             return ordered_list
         if node.left_child:
@@ -242,50 +261,53 @@ class BinarySearchTree(object):
 
 class SynthesizableBST(BinarySearchTree):
     """The synthesizable version of binary search tree."""
-    def synthesize(self, key_or_val):
-        """Synthesize the val (or key if exists) of a node.
-        Only performs bounded value synthesis if both upper
-        and lower bound exist for the node. Otherwise, create
-        an Untrusted val (or key if exists) of the same value
-        and with the synthesized flag set. If synthesis
-        failed for any reason, return False. If synthesis
-        succeeded, return True."""
-        node = self.find(key_or_val)
+    def synthesize(self, key):
+        """
+        Synthesize the key of a node if it exists.
+        Only performs bounded value synthesis if both
+        upper and lower bound exist for the node.
+        Otherwise, use a single bound synthesis. Note
+        that the node has at least one bound. If
+        synthesis failed for any reason, return False.
+        If synthesis succeeded, return True.
+        """
+        node = self.find(key)
         if node is None:
             return False
-        upper_bound = self._min_value(node.right_child)
-        lower_bound = self._max_value(node.left_child)
-        # Initialize a synthesizer based on the type of
-        # either the key (if exists) or val
-        value = node.val
-        if node.key:
-            value = node.key
+        upper_bound = self._min_child_value(node.right_child)
+        if not upper_bound:
+            # Try using a node parent to set the bound
+            upper_bound = self._first_right_parent_value(node)
+        lower_bound = self._max_child_value(node.left_child)
+        if not lower_bound:
+            # Try using a node parent to set the bound
+            lower_bound = self._first_left_parent_value(node)
+        # Initialize a synthesizer based on the type of the key
+        value = node.key
         synthesizer = init_synthesizer(value)
 
-        # If at most one bound exists, do simple synthesis
-        if not upper_bound or not lower_bound:
-            if node.key:
-                synthesized_value = synthesizer.simple_synthesis(node.key)
-            else:
-                synthesized_value = synthesizer.simple_synthesis(node.val)
+        # Only do bounded bounded_synthesis if both bounds exist
+        if not upper_bound and not lower_bound:
+            raise RuntimeError("something is wrong if a node has no bounds")
+        elif not upper_bound and lower_bound:
+            synthesizer.gt_constraint(lower_bound)
+            synthesized_value = synthesizer.to_python(synthesizer.value)
+        elif not lower_bound and upper_bound:
+            synthesizer.lt_constraint(upper_bound)
+            synthesized_value = synthesizer.to_python(synthesizer.value)
         else:
             # Do bounded synthesis if both bounds exist
             synthesized_value = synthesizer.bounded_synthesis(upper_bound=upper_bound,
                                                               lower_bound=lower_bound)
 
-        # Some synthesis can fail; synthesis
-        # failed if synthesized_value is None
+        # Some synthesis may fail; synthesis failed if synthesized_value is None
         if synthesized_value is None:
             return False
-        # Finally, if synthesis succeeded, replace the val
-        # (or key if exists) with the synthesized value.
+        # Finally, if synthesis succeeded, replace the key with the synthesized value.
         else:
-            if node.key:
-                node.key = synthesized_value
-                # The val will have its synthesized flag set
-                node.val.synthesized = True
-            else:
-                node.val = synthesized_value
+            node.key = synthesized_value
+            # The val will have its synthesized flag set only
+            node.val.synthesized = True
         return True
 
 
