@@ -1,4 +1,4 @@
-"""In-memory data structure high-level interface"""
+"""In-memory data structure interface."""
 from abc import ABCMeta
 import copy
 
@@ -7,7 +7,11 @@ from django.splice.backends.base import BaseStruct
 
 
 class DeclarativeStructMetaclass(DeclarativeFieldsMetaclass):
-    """Collect the data structure declared on the subclass."""
+    """
+    Collect the data structure *and* its fields declared in the subclass.
+    Fields are the types of data stores in the data structure. Field
+    declaration is inherited directly from DeclarativeFieldsMetaclass.
+    """
     def __new__(mcs, name, bases, attrs):
         # There should be only one struct field because each class
         # should be associated with at most one data structure
@@ -15,6 +19,7 @@ class DeclarativeStructMetaclass(DeclarativeFieldsMetaclass):
         for key, value in list(attrs.items()):
             if isinstance(value, BaseStruct):
                 struct = value
+                # The structure's declared name is no longer accessible.
                 attrs.pop(key)
         attrs['declared_struct'] = struct
 
@@ -23,40 +28,48 @@ class DeclarativeStructMetaclass(DeclarativeFieldsMetaclass):
 
     @property
     def objects(cls):
-        """This is to mimic Django model's way to retrieve objects."""
+        """
+        We mimic Django Model's way to retrieve data. In this case,
+        data *is* the data structure itself. This 'class property'
+        allows the subclass to directly access the data structure
+        through dot attribute access: Subclass.objects
+        """
         return cls.declared_struct
 
 
-# Compose both ABCMeta and DeclarativeFieldsMetaclass
-# Reference:
+# Compose both ABCMeta and DeclarativeFieldsMetaclass. Reference:
 # https://stackoverflow.com/questions/31379485/1-class-inherits-2-different-metaclasses-abcmeta-and-user-defined-meta
 DeclarativeFieldsMetaWithABCMixin = type('DeclarativeFieldsMetaWithABCMixin',
                                          (ABCMeta, DeclarativeStructMetaclass), {})
 
 
 class Struct(metaclass=DeclarativeStructMetaclass):
-    """All data structures must inherit from this class, which provides
-    a generic interface and incorporates synthesis-aware features. This
-    class should probably always be the first inherited superclass!
+    """
+    Django application developers should always inherit from this class
+    if they want to use Model-like synthesizable data structures for data
+    storage. To store data, developers should instantiate their subclass,
+    provide in kwargs all declared fields in the subclass, and call save().
 
-    For initialization, all fields declared in the subclass must exist
-    in kwargs. If a data structure takes both a key and a value, the key
-    should be one of the fields. The field that is not key is the value.
-    kwargs can take a single value or a list of values."""
+    A data structure can take values only or key/value pairs. For key/value
+    pairs, the key should be one of the fields and the other field that is
+    not the key is then value. The key parameter tells us which field is
+    considered to be the key. kwargs can take a single value (or a key/value
+    pair) or a list of values (or a list of key/value pairs).
+    """
     def __init__(self, *, key=None, **kwargs):
         self.key_name = key
-        # A data structure is required
+        # A data structure is *required*
         self.struct = self.declared_struct
         if self.struct is None:
             raise RuntimeError("you construct a data structure class without a data structure")
 
         self.fields = copy.deepcopy(self.base_fields)
-        # Either a field for key and a field for value or just one field
+        # Either a field for keys and a field for values, or just one field for values
         assert(len(self.fields) == 1 or len(self.fields) == 2), "you must provide either one or two fields, not" \
                                                                 " {}".format(len(self.fields))
 
         # Make sure an object instance supplies all fields declared.
-        # If key is given, make sure 'key' exist as a field name.
+        # If key is given, make sure 'key' exists as a field name.
         self.cleaned_data = {}
         if key and key not in self.fields:
             raise RuntimeError("key '{}' must be a declared field".format(key))
@@ -83,13 +96,17 @@ class Struct(metaclass=DeclarativeStructMetaclass):
                                                                                   "have a list of values"
 
     def full_clean(self):
-        """Raise a ValidationError for any errors that occur. We start with field
-        cleaning and then struct-wide cleaning just like how form is cleaned. Calling
-        full_clean() is optional (like in Models). But if one were to call full_clean(),
-        this should probably be called before save() or any method that modify self.struct.
+        """
+        Raise a ValidationError for any errors that occur. We start with field
+        cleaning and then perform struct-wide cleaning, just like how a form is
+        cleaned. Calling full_clean() is optional (like in Models). But if one
+        were to call full_clean(), this should probably be called before save()
+        or any method that modifies the data structure, self.struct.
 
-        IMPORTANT NOTE: Unlike in forms, clean_name should be aware that self.cleaned_data[name]
-        might be a list of values instead of just a single value; always check with isinstance()!"""
+        IMPORTANT NOTE: Unlike in forms, clean_<name> should be aware that
+        self.cleaned_data[<name>] might be a list of values instead of just a
+        single value; one should always check the type with isinstance().
+        """
         for name, field in self.fields.items():
             # Iteration stops if any field does not pass validation
             # We checked in __init__ that name must exist in self.data
@@ -106,15 +123,20 @@ class Struct(metaclass=DeclarativeStructMetaclass):
         self.cleaned_data = self.clean()
 
     def clean(self):
-        """Hook for doing any extra struct-wide cleaning after
+        """
+        Hook for doing any extra struct-wide cleaning after
         each field has been cleaned individually. clean() must
         return self.cleaned_data but perhaps with modification.
-        clean() can raise ValidationError."""
+        This method can raise ValidationError.
+        """
         return self.cleaned_data
 
     def save(self):
-        """Public interface to insert a value, a key/value pair, a list of
-        values or a list of key/value pairs into the data structure."""
+        """
+        Public interface to insert a value, a key/value pair,
+        a list of values, or a list of key/value pairs into the
+        data structure. This method mimics Model.save().
+        """
         if self.key_name:
             if isinstance(self.cleaned_data[self.key_name], list):
                 data = list(zip(self.cleaned_data[self.key_name], self.cleaned_data[self.value_name]))
