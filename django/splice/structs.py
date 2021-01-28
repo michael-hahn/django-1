@@ -1,126 +1,128 @@
 """In-memory data structure high-level interface"""
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 import copy
 
 from django.forms.forms import DeclarativeFieldsMetaclass
-from django.splice.untrustedtypes import untrustify
+from django.splice.backends.base import BaseStruct
+
+
+class DeclarativeStructMetaclass(DeclarativeFieldsMetaclass):
+    """Collect the data structure declared on the subclass."""
+    def __new__(mcs, name, bases, attrs):
+        # There should be only one struct field because each class
+        # should be associated with at most one data structure
+        struct = None
+        for key, value in list(attrs.items()):
+            if isinstance(value, BaseStruct):
+                struct = value
+                attrs.pop(key)
+        attrs['declared_struct'] = struct
+
+        new_class = super().__new__(mcs, name, bases, attrs)
+        return new_class
+
+    @property
+    def objects(cls):
+        """This is to mimic Django model's way to retrieve objects."""
+        return cls.declared_struct
 
 
 # Compose both ABCMeta and DeclarativeFieldsMetaclass
 # Reference:
 # https://stackoverflow.com/questions/31379485/1-class-inherits-2-different-metaclasses-abcmeta-and-user-defined-meta
 DeclarativeFieldsMetaWithABCMixin = type('DeclarativeFieldsMetaWithABCMixin',
-                                         (ABCMeta, DeclarativeFieldsMetaclass), {})
+                                         (ABCMeta, DeclarativeStructMetaclass), {})
 
 
-class BaseSynthesizableStruct(metaclass=DeclarativeFieldsMetaWithABCMixin):
+class Struct(metaclass=DeclarativeStructMetaclass):
     """All data structures must inherit from this class, which provides
     a generic interface and incorporates synthesis-aware features. This
-    class should probably always be the first inherited superclass!"""
-    def __init__(self, *args, **kwargs):
-        """Cooperative multi-inheritance"""
-        super().__init__(*args, **kwargs)
+    class should probably always be the first inherited superclass!
+
+    For initialization, all fields declared in the subclass must exist
+    in kwargs. If a data structure takes both a key and a value, the key
+    should be one of the fields. The field that is not key is the value.
+    kwargs can take a single value or a list of values."""
+    def __init__(self, *, key=None, **kwargs):
+        self.key_name = key
+        # A data structure is required
+        self.struct = self.declared_struct
+        if self.struct is None:
+            raise RuntimeError("you construct a data structure class without a data structure")
+
         self.fields = copy.deepcopy(self.base_fields)
+        # Either a field for key and a field for value or just one field
+        assert(len(self.fields) == 1 or len(self.fields) == 2), "you must provide either one or two fields, not" \
+                                                                " {}".format(len(self.fields))
 
-    def __init_subclass__(cls, **kwargs):
-        """This is used to automatically decorate all subclasses
-         function with untrustify.
-
-         TODO: This method may no longer be needed with the new save() implementation!
-         """
-        super().__init_subclass__(**kwargs)
-        decorated_funcs = set()
-        # We can interested in decorating callable, non-dunder functions
-        # It is unlikely that data structures uses dunder methods except
-        # maybe __getitem__, __setitem__, and __delitem__.
-        for c in cls.__mro__:
-            for key, value in c.__dict__.items():
-                if not callable(value) or key.startswith("__") or key in decorated_funcs:
-                    continue
-                setattr(c, key, untrustify(value))
-                decorated_funcs.add(key)
-        # Special cases not handled above
-        get_dunder = getattr(cls, "__getitem__", None)
-        set_dunder = getattr(cls, "__setitem__", None)
-        del_dunder = getattr(cls, "__delitem__", None)
-        if get_dunder:
-            setattr(cls, "__getitem__", untrustify(get_dunder))
-        if set_dunder:
-            setattr(cls, "__setitem__", untrustify(set_dunder))
-        if del_dunder:
-            setattr(cls, "__delitem__", untrustify(del_dunder))
-        #############################################
-        # TODO: Add more special cases here if needed
-        #############################################
-
-    @abstractmethod
-    def __save__(self, cleaned_data):
-        """All concrete data struct classes must implement this
-        helper function to insert/store data into the data structure.
-        It takes a dictionary of data to be inserted into the
-        data structure. 'cleaned_data' is already cleaned by save()."""
-        pass
-
-    def save(self, **kwargs):
-        """Public interface to insert a value or a key/value pair
-        into the data structure. Each data structure inherited from
-        this class determines name conventions used in fields. Note
-        that field names will be the keys of 'cleaned_data' passed
-        to __save__, which must be implemented by the subclass!"""
-        cleaned_data = {}
+        # Make sure an object instance supplies all fields declared.
+        # If key is given, make sure 'key' exist as a field name.
+        self.cleaned_data = {}
+        if key and key not in self.fields:
+            raise RuntimeError("key '{}' must be a declared field".format(key))
         for name, field in self.fields.items():
-            # User must provide all values indicated in the field declaration
+            if name != key:
+                self.value_name = name
             if name not in kwargs:
-                raise ValueError("{name} is required by the data structure.".format(name=name))
+                raise RuntimeError("missing a value for the '{}' field".format(name))
+            else:
+                # values are converted into untrusted values and then put into self.cleaned_data
+                if isinstance(kwargs[name], list):
+                    self.cleaned_data[name] = [field.to_python(v) for v in kwargs[name]]
+                else:
+                    self.cleaned_data[name] = field.to_python(kwargs[name])
+        # Last check to make sure each value in self.cleaned_data
+        # has the same length if it is a list (not a single value)
+        if key:
+            if isinstance(self.cleaned_data[self.key_name], list):
+                assert(isinstance(self.cleaned_data[self.value_name], list) and
+                       len(self.cleaned_data[self.key_name])
+                       == len(self.cleaned_data[self.value_name])), "must provide the same number of keys and values"
+            else:
+                assert(not isinstance(self.cleaned_data[self.value_name], list)), "a single key cannot " \
+                                                                                  "have a list of values"
+
+    def full_clean(self):
+        """Raise a ValidationError for any errors that occur. We start with field
+        cleaning and then struct-wide cleaning just like how form is cleaned. Calling
+        full_clean() is optional (like in Models). But if one were to call full_clean(),
+        this should probably be called before save() or any method that modify self.struct.
+
+        IMPORTANT NOTE: Unlike in forms, clean_name should be aware that self.cleaned_data[name]
+        might be a list of values instead of just a single value; always check with isinstance()!"""
+        for name, field in self.fields.items():
             # Iteration stops if any field does not pass validation
-            value = kwargs[name]
-            value = field.clean(value)
-            cleaned_data[name] = value
+            # We checked in __init__ that name must exist in self.data
+            if isinstance(self.cleaned_data[name], list):
+                for value in self.cleaned_data[name]:
+                    field.validate(value)
+                    field.run_validators(value)
+            else:
+                field.validate(self.cleaned_data[name])
+                field.run_validators(self.cleaned_data[name])
             if hasattr(self, 'clean_%s' % name):
-                value = getattr(self, 'clean_%s' % name)()
-                cleaned_data[name] = value
-        # Struct-wide clean
-        cleaned_data = BaseSynthesizableStruct.clean(cleaned_data)
-        # Last check to make sure at least something is in the cleaned_data.
-        # Otherwise there is no point calling __save__ to add empty values.
-        # If nothing is passed to __save__, then do nothing.
-        if not cleaned_data:
-            return
-        # Finally, add to data structure
-        self.__save__(cleaned_data)
+                self.cleaned_data[name] = getattr(self, 'clean_%s' % name)()
+        # struct-wide clean
+        self.cleaned_data = self.clean()
 
-    @abstractmethod
-    def get(self, **kwargs):
-        """All concrete data struct classes must implement this
-        interface to query the data structure. Query should fail
-        if data queried from the data structure is synthesized."""
-        pass
-
-    @abstractmethod
-    def delete(self, **kwargs):
-        """All concrete data struct classes must implement this
-        interface to remove the data from the data structure."""
-        pass
-
-    def peek(self, *args, **kwargs):
-        """Concrete data struct classes can optionally implement
-        this interface to query the data structure. Query will output
-        warnings if data queried is synthesized, but it will not fail."""
-        raise NotImplementedError("peek() is not implemented by the data structure")
-
-    @abstractmethod
-    def synthesize(self, *args, **kwargs):
-        """All concrete data struct classes must implement this
-        interface to perform data structure value synthesis."""
-        pass
-
-    @staticmethod
-    def clean(cleaned_data):
+    def clean(self):
         """Hook for doing any extra struct-wide cleaning after
-        Field.clean() has been called on every field. clean()
-        must take a dictionary of previously clean data and
-        return the same dictionary but perhaps with modification."""
-        return cleaned_data
+        each field has been cleaned individually. clean() must
+        return self.cleaned_data but perhaps with modification.
+        clean() can raise ValidationError."""
+        return self.cleaned_data
+
+    def save(self):
+        """Public interface to insert a value, a key/value pair, a list of
+        values or a list of key/value pairs into the data structure."""
+        if self.key_name:
+            if isinstance(self.cleaned_data[self.key_name], list):
+                data = list(zip(self.cleaned_data[self.key_name], self.cleaned_data[self.value_name]))
+            else:
+                data = (self.cleaned_data[self.key_name], self.cleaned_data[self.value_name])
+        else:
+            data = self.cleaned_data[self.value_name]
+        self.struct.save(data)
 
 
 if __name__ == "__main__":
