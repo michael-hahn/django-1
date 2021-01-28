@@ -46,8 +46,10 @@ def synthesis_debug(func):
         cls_name = get_class(func).__name__
         res = func(*args, **kwargs)
         res_type = type(res).__name__
-        print("[SYNTHESIS DEBUG] {func} (in class: {cls}) -> ({type}) {res}".format(func=func_name, cls=cls_name,
-                                                                                    type=res_type, res=res))
+        print("[SYNTHESIS DEBUG] {func} (in class: {cls}) -> ({type}) {res}".format(func=func_name,
+                                                                                    cls=cls_name,
+                                                                                    type=res_type,
+                                                                                    res=res.to_trusted()))
         return res
 
     return wrapper
@@ -384,6 +386,9 @@ class UntrustedMixin(object):
     #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
     #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
     #  to cast UntrustedStr.
+    # TODO: REMOVE THIS METHOD ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
+    def __str__(self):
+        return super().__str__()
 
     def to_trusted(self, forced=False):
         """Convert a value to its corresponding trusted type. Conversion results in
@@ -391,6 +396,8 @@ class UntrustedMixin(object):
         to be True. If 'forced' is True, conversion always works. """
         if self.synthesized and not forced:
             raise RuntimeError("cannot convert a synthesized value to a trusted value")
+        if not isinstance(self, UntrustedMixin):
+            return self
 
         if isinstance(self, UntrustedInt):
             return super().__int__()
