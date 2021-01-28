@@ -3,7 +3,6 @@ from collections import UserDict
 
 from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
 from django.splice.synthesis import IntSynthesizer, StrSynthesizer
-from django.splice.structs import BaseSynthesizableStruct
 
 
 class HashTable(object):
@@ -71,7 +70,7 @@ class HashTable(object):
         return item in self.keys()
 
 
-class SynthesizableHashTable(HashTable, BaseSynthesizableStruct):
+class SynthesizableHashTable(HashTable):
     """Inherit from HashTable to create a custom HashTable
     that behaves exactly like a HashTable but the elements
     in the SynthesizableHashTable can be synthesized."""
@@ -112,45 +111,8 @@ class SynthesizableHashTable(HashTable, BaseSynthesizableStruct):
                 return True
         return False
 
-    def __save__(self, cleaned_data):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. A subclass of this class can also override
-        this method for a customized store.
 
-        The default behavior is that cleaned_data contains a key
-        and a value where the key is prefixed by 'key_' and this
-        key/value pair is to be inserted into the hash table."""
-        if len(cleaned_data) != 2:
-            raise ValueError("By default, only one key and one value can be "
-                             "inserted at a time using save(). You may want "
-                             "to override __save__() for customized insertion.")
-        k = None
-        v = None
-        for key, value in cleaned_data.items():
-            if key.startswith('key_'):
-                k = value
-            else:
-                v = value
-        if not k or not v:
-            raise ValueError("Either key or value is not provided to save()."
-                             "You must make sure a key value is prefixed by"
-                             "'key_' and a value value is not.")
-        self.__setitem__(key=k, value=v)
-
-    def get(self, key):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        obtain data from SynthesizableHashTable."""
-        return self.__getitem__(key)
-
-    def delete(self, key):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        remove data from SynthesizableHashTable."""
-        return self.__delitem__(key)
-
-
-class SynthesizableDict(BaseSynthesizableStruct, UserDict):
+class SynthesizableDict(UserDict):
     """Inherit from UserDict to create a custom dict that
     behaves exactly like Python's built-in dict but the
     elements in the SynthesizableDict can be synthesized.
@@ -168,43 +130,6 @@ class SynthesizableDict(BaseSynthesizableStruct, UserDict):
 
     Here we inherit BaseSynthesizableStruct before UserDict
     because UserDict is not designed for multi-inheritance."""
-    def get(self, key):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        obtain data from SynthesizableDict."""
-        return self.data[key]
-
-    def __save__(self, cleaned_data):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. A subclass of this class can also override
-        this method for a customized store.
-
-        The default behavior is that cleaned_data contains a key
-        and a value where the key is prefixed by 'key_' and this
-        key/value pair is to be inserted into the hash table."""
-        if len(cleaned_data) != 2:
-            raise ValueError("By default, only one key and one value can be "
-                             "inserted at a time using save(). You may want "
-                             "to override __save__() for customized insertion.")
-        k = None
-        v = None
-        for key, value in cleaned_data.items():
-            if key.startswith('key_'):
-                k = value
-            else:
-                v = value
-        if not k or not v:
-            raise ValueError("Either key or value is not provided to save()."
-                             "You must make sure a key value is prefixed by"
-                             "'key_' and a value value is not.")
-        self.data[k] = v
-
-    def delete(self, key):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        remove data from SynthesizableDict."""
-        del self.data[key]
-
     def synthesize(self, key):
         """dict does not provide a programmatic way to access
         and overwrite keys in-place. Since UserDict (as well
@@ -240,77 +165,4 @@ class SynthesizableDict(BaseSynthesizableStruct, UserDict):
 
 
 if __name__ == "__main__":
-    from django.forms.fields import CharField, IntegerField
-
-    class NameNumHashTable(SynthesizableHashTable):
-        key_name = CharField()
-        num = IntegerField()
-
-    sd = NameNumHashTable()
-    sd.save(key_name="Jake", num=7)
-    sd.save(key_name="Blair", num=5)
-    sd.save(key_name="Luke", num=14)
-    sd.save(key_name="Andre", num=9)
-    sd.save(key_name="Zack", num=12)
-    print("Enumerating a string-keyed hash table:")
-    for key, value in sd:
-        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
-    sd.synthesize("Blair")
-    print("After deleting 'Blair' by synthesis, enumerate again:")
-    for key, value in sd:
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=sd.get(key),
-                                                                                   synthesis=key.synthesized))
-
-    class NumNameHashTable(SynthesizableHashTable):
-        name = CharField()
-        key_num = IntegerField()
-
-    sd = NumNameHashTable()
-    sd.save(key_num=7, name="Jake")
-    # We need a super big integer key so that the synthesized integer
-    # value would be different from this original value
-    sd.save(key_num=32345435432758439203535345435, name="Blair")
-    sd.save(key_num=14, name="Luke")
-    sd.save(key_num=9, name="Andre")
-    sd.save(key_num=12, name="Zack")
-    print("Enumerating an int-keyed hash table:")
-    for key, value in sd:
-        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
-    sd.synthesize(32345435432758439203535345435)
-    print("After deleting '32345435432758439203535345435' by synthesis, enumerate again:")
-    for key, value in sd:
-        print("* {key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
-                                                                                        hash=key.__hash__(),
-                                                                                        value=sd.get(key),
-                                                                                        synthesis=key.synthesized))
-
-    class NameNumHashTable(SynthesizableDict):
-        key_name = CharField()
-        num = IntegerField()
-
-    sd = NameNumHashTable()
-    sd.save(key_name="Jake", num=7)
-    sd.save(key_name="Blair", num=5)
-    sd.save(key_name="Luke", num=14)
-    sd.save(key_name="Andre", num=9)
-    sd.save(key_name="Zack", num=12)
-    print("Enumerating a string-keyed hash table:")
-    for key, value in sd.items():
-        print("* {key} (hash: {hash}) -> {value}".format(key=key, hash=key.__hash__(), value=sd.get(key)))
-    sd.synthesize("Luke")
-    print("After deleting 'Luke' by synthesis, enumerate again:")
-    for key, value in sd.items():
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=sd.get(key),
-                                                                                   synthesis=key.synthesized))
-
-    sd.delete("Andre")
-    print("After deleting 'Andre' by calling delete(), enumerate again:")
-    for key, value in sd.items():
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=sd.get(key),
-                                                                                   synthesis=key.synthesized))
+    pass

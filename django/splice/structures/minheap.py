@@ -2,10 +2,9 @@
 import heapq
 
 from django.splice.synthesis import init_synthesizer
-from django.splice.structs import BaseSynthesizableStruct
 
 
-class SynthesizableMinHeap(BaseSynthesizableStruct):
+class SynthesizableMinHeap(object):
     """A binary min heap for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for
     all k, counting elements from 0. For the sake of comparison, non-existing
     elements are considered to be infinite.  The interesting property of a
@@ -22,25 +21,15 @@ class SynthesizableMinHeap(BaseSynthesizableStruct):
         self._heap = initial
         heapq.heapify(self._heap)
 
-    def __save__(self, cleaned_data):
-        """Insert item into the heap while maintaining heap invariance.
-        BaseSynthesizableStruct enforces implementation of this method.
-        A subclass of this class can also override this method for a
-        customized store.
-
-        The default behavior is that cleaned_data contains only one element
-        and this element is to be inserted into the min heap."""
-        if len(cleaned_data) > 1:
-            raise ValueError("By default, only one value can be inserted "
-                             "at a time using save(). You may want to override"
-                             "__save__() for customized insertion.")
-        for key, value in cleaned_data.items():
-            heapq.heappush(self._heap, value)
+    def add(self, data):
+        """Add an item to the heap, while maintaining heap invariant.
+        This is the public-facing interface to add data to SynthesizableMinHeap."""
+        heapq.heappush(self._heap, data)
 
     def delete(self):
         """Pop the smallest item off the heap, while maintaining heap invariant.
-        BaseSynthesizableStruct enforces implementation of this method. This is t
-        he public-facing interface to obtain data from SynthesizableMinHeap.
+        BaseSynthesizableStruct enforces implementation of this method. This is
+        the public-facing interface to obtain data from SynthesizableMinHeap.
 
         Important Note: this method should not be used as get() since if it fails
         (because it returns a synthesized value), it would have already modified
@@ -138,44 +127,4 @@ class SynthesizableMinHeap(BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    from django.forms.fields import CharField, IntegerField
-
-    class NumberMinHeap(SynthesizableMinHeap):
-        """A min heap of numbers (integers)."""
-        num = IntegerField()
-
-    mh = NumberMinHeap()
-    mh.save(num=4)
-    mh.save(num=3)
-    mh.save(num=5)
-    mh.save(num=12)
-    mh.save(num=5)
-    mh.save(num=7)
-    mh.save(num=1)
-    print("Initial int min heap:\n{mh}".format(mh=mh))
-    print("Before synthesizing min, we can get min value: {min}".format(min=mh.get()))
-    mh.synthesize(0)
-    print("After synthesizing min:\n{mh}".format(mh=mh))
-    print("Now if we get min value: {min}".format(min=mh.get()))
-    mh.synthesize(2)
-    print("After synthesizing an intermediate value:\n{mh}".format(mh=mh))
-
-    class NameMinHeap(SynthesizableMinHeap):
-        """A min heap of names (characters)."""
-        name = CharField()
-
-    mh = NameMinHeap()
-    mh.save(name="Jake")
-    mh.save(name="Blair")
-    mh.save(name="Luke")
-    mh.save(name="Andre")
-    mh.save(name="Zack")
-    mh.save(name="Tommy")
-    mh.save(name="Sandra")
-    print("Initial str min heap:\n{mh}".format(mh=mh))
-    mh.delete()
-    print("After popping the min value:\n{mh}".format(mh=mh))
-    mh.synthesize(0)
-    print("After synthesizing min:\n{mh}".format(mh=mh))
-    mh.synthesize(2)
-    print("After synthesizing an intermediate value:\n{mh}".format(mh=mh))
+    pass

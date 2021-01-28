@@ -1,6 +1,5 @@
 """Binary search tree and synthesizable BST"""
 from django.splice.synthesis import init_synthesizer
-from django.splice.structs import BaseSynthesizableStruct
 
 
 class BiNode(object):
@@ -61,6 +60,7 @@ class BinarySearchTree(object):
         public API to construct a new tree or add new nodes to an existing tree."""
         if self.root is None:
             self._set_root(val, key)
+            return True
         else:
             # BST nodes either all have a key or none of the nodes have a key!
             if self.root.has_key() and not key:
@@ -68,7 +68,7 @@ class BinarySearchTree(object):
             elif not self.root.has_key() and key:
                 return False
             else:
-                self._insert_node(self.root, val, key)
+                return self._insert_node(self.root, val, key)
 
     def _set_root(self, val, key=None):
         """Application should not call this function directly.
@@ -83,14 +83,16 @@ class BinarySearchTree(object):
         new nodes to an existing tree."""
         if key and key < curr.key or not key and val < curr.val:
             if curr.left_child:
-                self._insert_node(curr.left_child, val, key)
+                return self._insert_node(curr.left_child, val, key)
             else:
                 curr.left_child = BiNode(val, key=key)
+                return True
         elif key and key > curr.key or not key and val > curr.val:
             if curr.right_child:
-                self._insert_node(curr.right_child, val, key)
+                return self._insert_node(curr.right_child, val, key)
             else:
                 curr.right_child = BiNode(val, key=key)
+                return True
         else:
             return False
 
@@ -229,36 +231,8 @@ class BinarySearchTree(object):
         return printout
 
 
-class SynthesizableBST(BinarySearchTree, BaseSynthesizableStruct):
-    """The synthesizable version of binary search tree.
-
-    Here we inherit BinarySearchTree before BaseSynthesizableStruct
-    for the same reason as in SynthesizableIntSet."""
-    def __save__(self, cleaned_data):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. A subclass of this class can also override
-        this method for a customized store.
-
-        The default behavior is that cleaned_data contains a key
-        and a value where the key is prefixed by 'key_' and this
-        key/value pair is to be inserted into the intSet."""
-        if len(cleaned_data) != 2:
-            raise ValueError("By default, only one key and one value can be "
-                             "inserted at a time using save(). You may want "
-                             "to override __save__() for customized insertion.")
-        k = None
-        v = None
-        for key, value in cleaned_data.items():
-            if key.startswith('key_'):
-                k = value
-            else:
-                v = value
-        if not k or not v:
-            raise ValueError("Either key or value is not provided to save()."
-                             "You must make sure a key value is prefixed by"
-                             "'key_' and a value value is not.")
-        self.insert(val=v, key=k)
-
+class SynthesizableBST(BinarySearchTree):
+    """The synthesizable version of binary search tree."""
     def synthesize(self, node):
         """Synthesize the val (or key if exists) of a node.
         Only performs bounded value synthesis if both upper
@@ -304,38 +278,4 @@ class SynthesizableBST(BinarySearchTree, BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    from django.forms.fields import CharField, IntegerField
-
-    class NameNumBST(SynthesizableBST):
-        key_name = CharField()
-        num = IntegerField()
-
-    bst = NameNumBST()
-    bst.save(key_name="Jake", num=7)
-    bst.save(key_name="Blair", num=5)
-    bst.save(key_name="Luke", num=14)
-    bst.save(key_name="Andre", num=9)
-    bst.save(key_name="Zack", num=12)
-    print("Flattened key-value tree (before synthesis): {}".format(str(bst)))
-    print("Synthesizing root node success: {}".format(bst.synthesize(bst.root)))
-    print("Flattened key-value tree (after synthesis): {}".format(str(bst)))
-
-    class NameOnlyBST(SynthesizableBST):
-        name = CharField()
-
-        def __save__(self, cleaned_data):
-            """Override default __save__ since BST is value-only."""
-            if len(cleaned_data) > 1:
-                raise ValueError("Only value can be inserted at a time using save().")
-            for key, value in cleaned_data.items():
-                self.insert(val=value)
-
-    bst = NameOnlyBST()
-    bst.save(name="Jake")
-    bst.save(name="Blair")
-    bst.save(name="Luke")
-    bst.save(name="Andre")
-    bst.save(name="Zack")
-    print("Flattened value-only tree (before synthesis): {}".format(str(bst)))
-    print("Synthesizing root node success: {}".format(bst.synthesize(bst.root)))
-    print("Flattened value-only tree (after synthesis): {}".format(str(bst)))
+    pass

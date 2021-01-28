@@ -1,7 +1,6 @@
 """Redis IntSet and Synthesizable IntSet"""
 from django.splice.synthesis import init_synthesizer
 from django.splice.untrustedtypes import UntrustedInt
-from django.splice.structs import BaseSynthesizableStruct
 
 
 class IntSet(object):
@@ -185,7 +184,7 @@ class IntSet(object):
         return set_str
 
 
-class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
+class SynthesizableIntSet(IntSet):
     """Inherit from IntSet to create a custom IntSet
     that behaves exactly like a IntSet (with elements sorted
     in the list) but the elements in the SynthesizableIntSet
@@ -219,12 +218,6 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
                                            byteorder='big', signed=True),
                             synthesized=synthesized)
 
-    def get(self, pos):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. This is the public-facing interface to
-        obtain data from SynthesizableIntSet."""
-        return self.__getitem__(pos, self._encoding)
-
     def __setitem__(self, pos, value, encoding):
         """Override the superclass __setitem__ method
         because value is converted into a byte array
@@ -237,20 +230,6 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
                     for i in value.to_bytes(self._encoding, byteorder='big', signed=True)]
         for i in range(pos*encoding, (pos+1)*encoding):
             self._contents[i] = byte_arr[i-pos*encoding]
-
-    def __save__(self, cleaned_data):
-        """BaseSynthesizableStruct enforces implementation of
-        this method. A subclass of this class can also override
-        this method for a customized store.
-
-        The default behavior is that cleaned_data contains only one element
-        and this element is to be inserted into the intSet."""
-        if len(cleaned_data) > 1:
-            raise ValueError("By default, only one value can be inserted "
-                             "at a time using save(). You may want to override"
-                             "__save__() for customized insertion.")
-        for key, value in cleaned_data.items():
-            self.add(value=value)
 
     def synthesize(self, pos):
         """Synthesize a new value at pos (of intSet) without invalidating ordered-set
@@ -296,56 +275,4 @@ class SynthesizableIntSet(IntSet, BaseSynthesizableStruct):
 
 
 if __name__ == "__main__":
-    from django.forms.fields import IntegerField
-
-    class NumberIntSet(SynthesizableIntSet):
-        """An InSet of numbers (integers)."""
-        num = IntegerField()
-
-    int_set = NumberIntSet()
-    int_set.save(num=5)
-    int_set.save(num=30)
-    int_set.save(num=-7)
-    int_set.save(num=14)
-    int_set.save(num=5)
-    # We should not have access to _contents but it is OK for testing
-    print("intSet: {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(num=35267)
-    # We expect the intSet to take more space now (int16 -> int32)
-    print("intSet (after inserting 35267): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(num=2_447_483_647)
-    # We expect the intSet to take even more space now (int32 -> int64)
-    print("intSet (after inserting 2,447,483,647): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    int_set.save(num=-335267)
-    int_set.save(num=-2_447_483_747)
-    print("intSet (after inserting -335267 and -2,447,483,747): {set} ({bytes} bytes)".format(set=int_set, bytes=len(int_set._contents)))
-    print("45 is in the set: {}".format(int_set.find(45)))
-    print("35267 is in the set: {}".format(int_set.find(35267)))
-    print("-335267 is in the set: {}".format(int_set.find(-335267)))
-    # Delete does not "downgrading" encoding in Redis
-    int_set.delete(0)
-    int_set.delete(30)
-    print("intSet (after deleting 0 and 30): {set} ({bytes} bytes)".format(set=int_set,
-                                                                           bytes=len(int_set._contents)))
-    int_set.delete(-2447483747)
-    print("intSet (after deleting -2447483747): {set} ({bytes} bytes)".format(set=int_set,
-                                                                              bytes=len(int_set._contents)))
-    int_set.delete(2447483647)
-    print("intSet (after deleting 2447483647): {set} ({bytes} bytes)".format(set=int_set,
-                                                                             bytes=len(int_set._contents)))
-    int_set.synthesize(0)
-    print("intSet (after synthesizing -335267): {set} ({bytes} bytes)".format(set=int_set,
-                                                                              bytes=len(int_set._contents)))
-    int_set.synthesize(3)
-    print("intSet (after synthesizing 14): {set} ({bytes} bytes)".format(set=int_set,
-                                                                         bytes=len(int_set._contents)))
-    int_set.synthesize(4)
-    print("intSet (after synthesizing 35267): {set} ({bytes} bytes)".format(set=int_set,
-                                                                            bytes=len(int_set._contents)))
-    print("Getting all elements from intSet through get():")
-    for i in range(len(int_set)):
-        value = int_set.get(i)
-        print("* int_set[{i}] = {value} (Synthesized: {synthesized}) "
-              "is a valid value in the intSet".format(i=i,
-                                                      value=value,
-                                                      synthesized=value.synthesized))
+    pass
