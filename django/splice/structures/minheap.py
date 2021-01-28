@@ -1,20 +1,24 @@
-"""Synthesizable min heap data structure"""
+"""MinHeap and synthesizable MinHeap data structure."""
 import heapq
 
 from django.splice.synthesis import init_synthesizer
 
 
-class SynthesizableMinHeap(object):
-    """A binary min heap for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for
+class MinHeap(object):
+    """
+    A binary min heap for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for
     all k, counting elements from 0. For the sake of comparison, non-existing
-    elements are considered to be infinite.  The interesting property of a
-    heap is that a[0] is always its smallest element. See docstring from heapq.py."""
+    elements are considered to be infinite. The interesting property of a heap
+    is that a[0] is always its smallest element. See docstring from heapq.py.
+    """
     def __init__(self, initial=None, *args, **kwargs):
-        """Defaults to an empty heap. Initial can also be
+        """
+        Defaults to an empty heap. 'initial' can also be
         a list, which could be transformed into a heap.
 
-        'initial' should not be a mutable default value, because:
-        https://stackoverflow.com/a/40750485/9632613."""
+        'initial' should *not* be a mutable default value:
+        https://stackoverflow.com/a/40750485/9632613.
+        """
         super().__init__(*args, **kwargs)
         if not initial:
             initial = list()
@@ -22,43 +26,62 @@ class SynthesizableMinHeap(object):
         heapq.heapify(self._heap)
 
     def add(self, data):
-        """Add an item to the heap, while maintaining heap invariant.
-        This is the public-facing interface to add data to SynthesizableMinHeap."""
+        """Add an item to the heap, while maintaining heap invariant."""
         heapq.heappush(self._heap, data)
 
-    def delete(self):
-        """Pop the smallest item off the heap, while maintaining heap invariant.
-        BaseSynthesizableStruct enforces implementation of this method. This is
-        the public-facing interface to obtain data from SynthesizableMinHeap.
-
-        Important Note: this method should not be used as get() since if it fails
-        (because it returns a synthesized value), it would have already modified
-        the data structure and popped the head of the queue! A get() function that
-        might fail should not modify the data structure unless there is roll-back
-        action defined somehow!"""
+    def pop(self):
+        """Pop the smallest item off the heap, while maintaining heap invariant."""
         return heapq.heappop(self._heap)
 
     def get(self):
-        """Return the smallest item from the heap (if exists),
-        without popping it out. Otherwise, return None."""
+        """Get the smallest item from the heap (if exists), without popping it out. Otherwise, return None."""
         if len(self._heap) > 0:
             return self._heap[0]
         return None
-
-    def clear(self):
-        self._heap.clear()
 
     def to_list(self):
         """Return a list of all elements in the heap."""
         return self._heap
 
+    def __str__(self):
+        """Make the contents of the heap into a string."""
+        heap = str()
+        for i in range(0, (len(self._heap) // 2)):
+            if 2*i+2 < len(self._heap):
+                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
+                        "-> [{left} (Synthesized: {left_synthesis})  " \
+                        "{right} (Synthesized: " \
+                        "{right_synthesis})]\n".format(parent=self._heap[i],
+                                                       parent_synthesis=self._heap[i].synthesized,
+                                                       left=self._heap[2*i+1],
+                                                       left_synthesis=self._heap[2*i+1].synthesized,
+                                                       right=self._heap[2*i+2],
+                                                       right_synthesis=self._heap[2*i+2].synthesized)
+            else:
+                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
+                        "-> [{left} (Synthesized: " \
+                        "{left_synthesis})]".format(parent=self._heap[i],
+                                                    parent_synthesis=self._heap[i].synthesized,
+                                                    left=self._heap[2 * i + 1],
+                                                    left_synthesis=self._heap[2 * i + 1].synthesized)
+        return heap
+
+
+class SynthesizableMinHeap(MinHeap):
+    """
+    Inherit from MinHeap to create a custom min heap that
+    behaves exactly like a MinHeap but the elements in the
+    SynthesizableMinHeap can be synthesized.
+    """
     def synthesize(self, index):
-        """Synthesize a new value at index without invalidating heap invariant.
+        """
+        Synthesize a new value at 'index' without invalidating heap invariant.
         The synthesized value must be smaller than both children (if exist) and
         larger than its parent (if exists). Returns True if synthesis succeeds.
 
         Important Note: Unlike insertion, synthesis must explicitly ensure that
-        the value is smaller than its parent!"""
+        the value is smaller than its parent.
+        """
         if index >= len(self._heap) or index < 0:
             raise IndexError('list index out of range')
 
@@ -101,29 +124,6 @@ class SynthesizableMinHeap(object):
         synthesized_value = synthesizer.to_python(synthesizer.value)
         self._heap[index] = synthesized_value
         return True
-
-    def __str__(self):
-        """The contents of the heap."""
-        heap = str()
-        for i in range(0, (len(self._heap) // 2)):
-            if 2*i+2 < len(self._heap):
-                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
-                        "-> [{left} (Synthesized: {left_synthesis})  " \
-                        "{right} (Synthesized: " \
-                        "{right_synthesis})]\n".format(parent=self._heap[i],
-                                                       parent_synthesis=self._heap[i].synthesized,
-                                                       left=self._heap[2*i+1],
-                                                       left_synthesis=self._heap[2*i+1].synthesized,
-                                                       right=self._heap[2*i+2],
-                                                       right_synthesis=self._heap[2*i+2].synthesized)
-            else:
-                heap += "[{parent} (Synthesized: {parent_synthesis})] " \
-                        "-> [{left} (Synthesized: " \
-                        "{left_synthesis})]".format(parent=self._heap[i],
-                                                    parent_synthesis=self._heap[i].synthesized,
-                                                    left=self._heap[2 * i + 1],
-                                                    left_synthesis=self._heap[2 * i + 1].synthesized)
-        return heap
 
 
 if __name__ == "__main__":
