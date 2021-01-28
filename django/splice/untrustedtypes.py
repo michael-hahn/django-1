@@ -57,11 +57,16 @@ def synthesis_debug(func):
 
 
 def to_untrusted(value, synthesized):
-    """Convert a value to its corresponding untrusted
-    type if exists. The flag will be set as synthesized.
-    If no untrusted version exists, return itself."""
+    """
+    Convert a value to its corresponding untrusted
+    type if the type exists. The flag will be set
+    as synthesized. If there exists no corresponding
+    untrusted version, we return the value itself.
+    If value is already an untrusted value, this
+    function can be used to modify synthesized flag.
+    """
+    # If value is already an Untrusted type
     if isinstance(value, UntrustedMixin):
-        # If value is already an Untrusted type
         value.synthesized = synthesized
         return value
     # boolean value is always bool (bool is not extensible)
@@ -79,43 +84,45 @@ def to_untrusted(value, synthesized):
     #####################################################
     # TODO: Add more casting here for new untrusted types
     #####################################################
-    # Recursively convert values in list or other structured data
-    # Note that we cannot use list/dict/set comprehension because
-    # we do not want this function to create a new object (which
-    # will not work well with recursion!
+    #  Recursively convert values in list or other structured data
+    #  Note that we do not just use list/dict/set comprehension as
+    #  we do not want this function to create a new list/dict/set
+    #  object since lists/dicts/sets are mutable and may be passed
+    #  around in recursive functions to be mutated.
     elif isinstance(value, list):
         for i in range(len(value)):
             value[i] = to_untrusted(value[i], synthesized)
         return value
     elif isinstance(value, tuple):
-        # Creating a new tuple is fine because tuple is immutable anyways
+        # Creating a new tuple is fine because tuple is immutable
         return tuple(to_untrusted(v, synthesized) for v in value)
+    # Cannot modify a set during iteration, so we do it this way:
     elif isinstance(value, set):
-        list_copy = []
-        for v in value:
-            list_copy.append(to_untrusted(v, synthesized))
+        list_copy = [to_untrusted(v, synthesized) for v in value]
         value.clear()
         value.update(list_copy)
         return value
+    # Cannot modify a dict during iteration, so we do it this way:
     elif isinstance(value, dict):
         untrusted_dict = {to_untrusted(k, synthesized): to_untrusted(v, synthesized)
                           for k, v in value.items()}
         value.clear()
         value.update(untrusted_dict)
         return value
-    # TODO: We may consider a generic Untrusted type,
-    #  instead of returning a trusted value.
+    # TODO: We may consider a generic Untrusted type, instead of returning a trusted value.
     else:
         return value
 
 
 def is_synthesized(value):
-    """A helper function that checks if a value
-    contains a set (True) synthesized flag."""
+    """
+    A helper function that checks if a value
+    contains a set (True) synthesized flag.
+    """
     synthesized = False
     if isinstance(value, UntrustedMixin):
         return value.synthesized
-    # recursively convert values in list or other structured data
+    # Recursively check values in a list or other data structures
     elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set):
         for v in value:
             if is_synthesized(v):
@@ -133,14 +140,18 @@ def is_synthesized(value):
 
 
 def add_synthesis(func):
-    """A function decorator that makes the original function
-    (that are not synthesis-aware) return Untrusted values."""
+    """
+    A function decorator that makes the original function (that
+    may not be synthesis-aware) return untrusted values if defined.
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         res = func(*args, **kwargs)
-        if res is NotImplemented:
+        # Some quick return (no need to wrap those)
+        if res is NotImplemented or res is None:
             return res
-        # Set synthesized flag if any args/kwargs sets the flag
+        # Set synthesized flag if *any* args/kwargs sets the flag
+        # TODO: does this *always* make sense?
         synthesized = False
         for arg in args:
             if is_synthesized(arg):

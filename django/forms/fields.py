@@ -32,7 +32,7 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedDecimal, synthesis_debug
+from django.splice.untrustedtypes import synthesis_debug, add_synthesis
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
@@ -223,6 +223,7 @@ class CharField(Field):
         self.validators.append(validators.ProhibitNullCharactersValidator())
 
     @synthesis_debug
+    @add_synthesis
     def to_python(self, value):
         """Return a string."""
         if value not in self.empty_values:
@@ -230,8 +231,8 @@ class CharField(Field):
             if self.strip:
                 value = value.strip()
         if value in self.empty_values:
-            return UntrustedStr(self.empty_value)
-        return UntrustedStr(value)
+            return self.empty_value
+        return value
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
@@ -264,6 +265,7 @@ class IntegerField(Field):
             self.validators.append(validators.MinValueValidator(min_value))
 
     @synthesis_debug
+    @add_synthesis
     def to_python(self, value):
         """
         Validate that int() can be called on the input. Return the result
@@ -279,7 +281,7 @@ class IntegerField(Field):
             value = int(self.re_decimal.sub('', str(value)))
         except (ValueError, TypeError):
             raise ValidationError(self.error_messages['invalid'], code='invalid')
-        return UntrustedInt(value)
+        return value
 
     def widget_attrs(self, widget):
         attrs = super().widget_attrs(widget)
@@ -297,6 +299,7 @@ class FloatField(IntegerField):
     }
 
     @synthesis_debug
+    @add_synthesis
     def to_python(self, value):
         """
         Validate that float() can be called on the input. Return the result
@@ -311,7 +314,7 @@ class FloatField(IntegerField):
             value = float(value)
         except (ValueError, TypeError):
             raise ValidationError(self.error_messages['invalid'], code='invalid')
-        return UntrustedFloat(value)
+        return value
 
     def validate(self, value):
         super().validate(value)
@@ -338,6 +341,7 @@ class DecimalField(IntegerField):
         self.validators.append(validators.DecimalValidator(max_digits, decimal_places))
 
     @synthesis_debug
+    @add_synthesis
     def to_python(self, value):
         """
         Validate that the input is a decimal number. Return a Decimal
@@ -354,7 +358,7 @@ class DecimalField(IntegerField):
             value = Decimal(value)
         except DecimalException:
             raise ValidationError(self.error_messages['invalid'], code='invalid')
-        return UntrustedDecimal(value)
+        return value
 
     def validate(self, value):
         super().validate(value)
