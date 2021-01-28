@@ -1,15 +1,18 @@
-"""Redis IntSet and Synthesizable IntSet"""
+"""Redis IntSet and Synthesizable IntSet."""
+
 from django.splice.synthesis import init_synthesizer
 from django.splice.untrustedtypes import UntrustedInt
 
 
 class IntSet(object):
-    """Python implementation of Redis' intSet data structure (simplified).
+    """
+    Python implementation of Redis' intSet data structure (simplified).
     A quick introduction can be found here:
     http://blog.wjin.org/posts/redis-internal-data-structure-intset.html
     Original C code reference (v5.0.0) can be found here:
     http://blog.wjin.org/posts/redis-internal-data-structure-intset.html.
-    Unlike the original implementation, we will always use big endian."""
+    Unlike the original implementation, we will always use big endian.
+    """
     # Different encodings use different numbers of bytes
     INTSET_ENC_INT16 = 2
     INTSET_ENC_INT32 = 4
@@ -21,11 +24,13 @@ class IntSet(object):
     INT32_MAX = 2_147_483_647
 
     def __init__(self, *args, **kwargs):
-        """Initialize an intSet with default int16 encoding, which
+        """
+        Initialize an intSet with default int16 encoding, which
         can be upgraded to int32 and then int64 later if needed.
         self._length is the number of actual integers in intSet, *not*
         the length of self._contents. Each element in self._contents
-        is an int8 value."""
+        is an int8 value.
+        """
         super().__init__(*args, **kwargs)
         self._encoding = IntSet.INTSET_ENC_INT16
         self._length = 0
@@ -42,17 +47,28 @@ class IntSet(object):
             return IntSet.INTSET_ENC_INT16
 
     def __getitem__(self, pos, encoding):
-        """Return the value at pos, using the configured encoding.
+        """
+        Return the value at pos, using the configured encoding.
         Note that pos is in terms of the set visible to the user,
         it is not the location in self._contents (i.e., pos would
-        correspond to self._length)."""
+        correspond to self._length).
+        """
         return int.from_bytes(self._contents[pos*encoding:(pos+1)*encoding], byteorder='big', signed=True)
 
+    def get(self, pos):
+        """
+        Return the value at pos. Unlike __getitem__, this is a public
+        API so that users do not need to worry about the encoding.
+        """
+        return self.__getitem__(pos, self._encoding)
+
     def __setitem__(self, pos, value, encoding):
-        """Set the value at pos using the configured encoding.
+        """
+        Set the value at pos using the configured encoding.
         Note that pos is in terms of the set visible to the user,
         it is not the location in self._contents (i.e., pos would
-        correspond to self._length)."""
+        correspond to self._length).
+        """
         byte_arr = [int(i) for i in value.to_bytes(self._encoding, byteorder='big', signed=True)]
         for i in range(pos*encoding, (pos+1)*encoding):
             self._contents[i] = byte_arr[i-pos*encoding]
@@ -62,11 +78,13 @@ class IntSet(object):
         return self._length
 
     def _search(self, value):
-        """Search for the position of "value". Returns a tuple (1, pos)
+        """
+        Search for the position of "value". Returns a tuple (1, pos)
         if the value was found and pos would be the position of the value
         within the intSet (note that values are sorted); otherwise, return
         (0, pos) if the value is not present in the intSet and pos is
-        the position where value can be inserted."""
+        the position where value can be inserted.
+        """
         if self._length == 0:
             # We cannot find any value if intSet is empty
             return 0, 0
@@ -125,8 +143,10 @@ class IntSet(object):
         self._length += 1
 
     def _move_tail(self, from_pos, to_pos):
-        """Move elements starting from from_pos position to
-        locations starting from to_pos position in intSet."""
+        """
+        Move elements starting from from_pos position to
+        locations starting from to_pos position in intSet.
+        """
         bytes_to_move = (self._length - from_pos) * self._encoding
         # src, dst are locations in self._contents
         src = self._encoding * from_pos
@@ -185,8 +205,9 @@ class IntSet(object):
 
 
 class SynthesizableIntSet(IntSet):
-    """Inherit from IntSet to create a custom IntSet
-    that behaves exactly like a IntSet (with elements sorted
+    """
+    Inherit from IntSet to create a custom IntSet that
+    behaves exactly like a IntSet (with elements sorted
     in the list) but the elements in the SynthesizableIntSet
     can be synthesized. We intentionally did not add
     the synthesis feature in the IntSet superclass (even
@@ -194,21 +215,14 @@ class SynthesizableIntSet(IntSet):
     highlight the changes that must be done to make IntSet
     synthesizable (and that its unique encoding design
     makes synthesis different from, e.g., a sorted list).
-
-    Here we inherit IntSet before BaseSynthesizableStruct so
-    that we do not need to reimplement methods like delete()
-    in SynthesizableIntSet (since it can be inherited from
-    IntSet). If we inherit BaseSynthesizableStruct first, we
-    will have to implement them again (since BaseSynthesizableStruct
-    won't find their implementation). We can inherit
-    BaseSynthesizableStruct second because IntSet's __init__
-    calls super() (and is multi-inheritance aware), while
-    SortedList is not!"""
+    """
     def __getitem__(self, pos, encoding):
-        """Override the superclass __getitem__ method
-        because we must return an UntrustedInt instead of
-        int and we must check if the returned value should
-        have synthesized flag set or not."""
+        """
+        Override IntSet's __getitem__ method because
+        we must return an UntrustedInt instead of int
+        and we must check if the returned value should
+        have synthesized flag set or not.
+        """
         # All values in self._contents should be of type UntrustedInt
         # If any value is synthesized, the entire value should be synthesized
         synthesized = False
@@ -219,12 +233,15 @@ class SynthesizableIntSet(IntSet):
                             synthesized=synthesized)
 
     def __setitem__(self, pos, value, encoding):
-        """Override the superclass __setitem__ method
-        because value is converted into a byte array
-        to be inserted into the data structure, instead
-        of being directly inserted into the data structure.
-        We do not want to "lose" the Untrusted type during
-        the conversion!"""
+        """
+        Override IntSet's __setitem__ method
+        because value is converted into a byte
+        array to be inserted into the data
+        structure, instead of being directly
+        inserted into the data structure. We do
+        not want to "lose" the Untrusted type
+        during the conversion.
+        """
         synthesized = value.synthesized
         byte_arr = [UntrustedInt(i, synthesized=synthesized)
                     for i in value.to_bytes(self._encoding, byteorder='big', signed=True)]
@@ -232,16 +249,17 @@ class SynthesizableIntSet(IntSet):
             self._contents[i] = byte_arr[i-pos*encoding]
 
     def synthesize(self, pos):
-        """Synthesize a new value at pos (of intSet) without invalidating ordered-set
+        """
+        Synthesize a new value at pos (of intSet) without invalidating ordered-set
         invariant. The synthesized value must be smaller than the next value (if exist)
-        and larger than the previous one (if exists). Returns True if synthesis succeeds.
+        and larger than the previous one (if exists). Return True if synthesis succeeds.
         It is possible that the same value is marked as synthesized because no other
         synthesis value is possible.
 
         Note: Synthesis should not change the encoding of this data structure. Therefore,
         it is possible that a suitable value only exists in a different encoding but
-        because we cannot use the value, we would have to use the same value (and mark it
-        as synthesized). """
+        because we cannot use the value, we would have to use the same value.
+        """
         if pos >= self._length or pos < 0:
             raise IndexError('set index out of range')
         value = self.__getitem__(pos, self._encoding)
