@@ -1,23 +1,16 @@
-"""Binary search tree and synthesizable BST"""
+"""Binary search tree and synthesizable BST."""
+
 from django.splice.synthesis import init_synthesizer
 
 
 class BiNode(object):
-    """Node class with two children."""
-    def __init__(self, val, *, key=None):
-        """Use key for organization if exists; otherwise, use val."""
-        self._val = val
+    """Node class with two children and a parent."""
+    def __init__(self, key, val):
         self._key = key
+        self._val = val
         self._left = None
         self._right = None
-
-    @property
-    def val(self):
-        return self._val
-
-    @val.setter
-    def val(self, val):
-        self._val = val
+        self._parent = None
 
     @property
     def key(self):
@@ -27,8 +20,13 @@ class BiNode(object):
     def key(self, key):
         self._key = key
 
-    def has_key(self):
-        return bool(self._key)
+    @property
+    def val(self):
+        return self._val
+
+    @val.setter
+    def val(self, val):
+        self._val = val
 
     @property
     def left_child(self):
@@ -46,6 +44,14 @@ class BiNode(object):
     def right_child(self, node):
         self._right = node
 
+    @property
+    def parent(self):
+        return self._parent
+
+    @parent.setter
+    def parent(self, node):
+        self._parent = node
+
 
 class BinarySearchTree(object):
     """BST using BiNode."""
@@ -53,165 +59,168 @@ class BinarySearchTree(object):
         super().__init__(*args, **kwargs)
         self.root = None
 
-    def insert(self, val, key=None):
-        """Insert a value (or key/value pair if keys are used) to a BST.
-        Returns False if insertion failed (e.g., if a key/value pair
-        is given to be inserted into a value-only tree). This is the
-        public API to construct a new tree or add new nodes to an existing tree."""
+    def insert(self, key, val):
+        """
+        Insert a key/value pair to a BST and returns False if
+        insertion failed. This is the public API to construct
+        a new tree or add a new node to an existing tree.
+        """
         if self.root is None:
-            self._set_root(val, key)
+            self._set_root(key, val)
             return True
         else:
-            # BST nodes either all have a key or none of the nodes have a key!
-            if self.root.has_key() and not key:
-                return False
-            elif not self.root.has_key() and key:
-                return False
-            else:
-                return self._insert_node(self.root, val, key)
+            return self._insert_node(self.root, key, val)
 
-    def _set_root(self, val, key=None):
-        """Application should not call this function directly.
-        Always call the public API insert() to construct a new tree."""
-        self.root = BiNode(val, key=key)
+    def _set_root(self, key, val):
+        """
+        A helper function to set the root node. Users should not call
+        this function directly but call the public API insert() to
+        construct a new tree instead.
+        """
+        self.root = BiNode(key, val)
 
-    def _insert_node(self, curr, val, key=None):
-        """Only unique values (or keys if exist) inserted modify the tree.
-        If insertion is not successful (e.g., val is the same as a node
-        already in the tree), it returns False. Application should not call
-        this function directly. Always call the public API insert() to add
-        new nodes to an existing tree."""
-        if key and key < curr.key or not key and val < curr.val:
+    def _insert_node(self, curr, key, val):
+        """
+        Only unique keys modify the tree after insertion. If insertion is
+        not successful (e.g., 'key' is already in the tree), it returns
+        False. Users should not call this function directly but call the
+        public API insert() to add a new node to an existing tree.
+        """
+        if key < curr.key:
             if curr.left_child:
-                return self._insert_node(curr.left_child, val, key)
+                return self._insert_node(curr.left_child, key, val)
             else:
-                curr.left_child = BiNode(val, key=key)
+                curr.left_child = BiNode(key, val)
+                curr.left_child.parent = curr
                 return True
-        elif key and key > curr.key or not key and val > curr.val:
+        elif key > curr.key:
             if curr.right_child:
-                return self._insert_node(curr.right_child, val, key)
+                return self._insert_node(curr.right_child, key, val)
             else:
-                curr.right_child = BiNode(val, key=key)
+                curr.right_child = BiNode(key, val)
+                curr.right_child.parent = curr
                 return True
         else:
             return False
 
     def get(self, key):
-        """If the BST has both a key and a value in a node,
-        returns the value for a given key if the key exists.
-        Otherwise, return None."""
+        """Returns the value for a given key if the key exists. Otherwise, return None."""
         n = self.find(key)
         if not n:
             return None
         return n.val
 
-    def find(self, key_or_val):
-        """Return the node if value (or key if exists) is in the
-        tree; otherwise, return None. This is the public API to
-        find a node in a tree."""
-        return self._find_node(self.root, key_or_val)
+    def find(self, key):
+        """
+        Return the node if key is in the tree; otherwise, return None.
+        This is the public API to find a node of a given key in a tree.
+        """
+        return self._find_node(self.root, key)
 
-    def _find_node(self, curr, key_or_val):
-        """Find a node based on the given value (or key if exists).
-        Returns None if the value (or key) does not exist in the
-        tree. Application should call the public API find() instead."""
+    def _find_node(self, curr, key):
+        """
+        A helper function to find a node based on the given key.
+        Return None if the key does not exist in the tree. Users
+        should not call this method but the public API find().
+        """
         if not curr:
             return None
-        curr_val = curr.val
-        if curr.key:
-            curr_val = curr.key
 
-        if key_or_val == curr_val:
+        if key == curr.key:
             return curr
-        elif key_or_val > curr_val:
-            return self._find_node(curr.right_child, key_or_val)
+        elif key > curr.key:
+            return self._find_node(curr.right_child, key)
         else:
-            return self._find_node(curr.left_child, key_or_val)
+            return self._find_node(curr.left_child, key)
 
-    def delete(self, key_or_val):
-        """Modify the tree by removing a node if it has the
-        given value (or key if exists). Otherwise, do nothing.
-        This is the public API to delete a node in a tree."""
-        self.root = self._delete_node(self.root, key_or_val)
+    def delete(self, key):
+        """
+        Modify the tree by removing a node if it has the given
+        key. Otherwise, do nothing. This is the public API to
+        delete a node in a tree.
+        """
+        self.root = self._delete_node(self.root, key)
 
-    def _delete_node(self, curr, key_or_val):
-        """Find a node based on the given value (or key if exists)
-        and delete the node from the tree if it exists. Application
-        should call the public API delete() instead."""
+    def _delete_node(self, curr, key):
+        """
+        Find a node based on the given key and delete the node
+        from the tree if it exists. Users should not call this
+        helper function but the public API delete() instead.
+        """
         if curr is None:
             return curr
-        curr_val = curr.val
-        if curr.has_key():
-            curr_val = curr.key
 
-        if key_or_val < curr_val:
-            curr.left_child = self._delete_node(curr.left_child, key_or_val)
-        elif key_or_val > curr_val:
-            curr.right_child = self._delete_node(curr.right_child, key_or_val)
+        if key < curr.key:
+            curr.left_child = self._delete_node(curr.left_child, key)
+        elif key > curr.key:
+            curr.right_child = self._delete_node(curr.right_child, key)
         else:
             if curr.left_child is None:
+                if curr.right_child is not None:
+                    curr.right_child.parent = curr.parent
                 return curr.right_child
             elif curr.right_child is None:
+                if curr.left_child is not None:
+                    curr.left_child.parent = curr.parent
                 return curr.left_child
             candidate = self._min_value_node(curr.right_child)
-
+            curr.key = candidate.key
             curr.val = candidate.val
-            key_or_val = candidate.val
-            if curr.has_key():
-                curr.key = candidate.key
-                key_or_val = candidate.key
-            curr.right_child = self._delete_node(curr.right_child, key_or_val)
+            curr.right_child = self._delete_node(curr.right_child, candidate.key)
         return curr
 
     def _max_value_node(self, node):
-        """The node with the maximum value (or key if exists) of a (sub)tree
-        rooted at node. The maximum value is the node itself if it has no
-        right subtree."""
+        """
+        Return the node with the maximum key in a
+        (sub)tree rooted at node. The maximum value
+        is the node itself if it has no right subtree.
+        """
         if node is None:
-            return None
+            return node
         if node.right_child:
             return self._max_value_node(node.right_child)
         return node
 
     def _max_value(self, node):
-        """The maximum value (or key if exists) of a (sub)tree rooted at node.
-        The maximum value is the node itself if it has no right subtree."""
+        """
+        Return the maximum key in a (sub)tree rooted at node.
+        The maximum value is the node itself if it has no
+        right subtree. Return False if the node does not exist.
+        """
         max_node = self._max_value_node(node)
         if max_node is None:
             return False
-        if max_node.has_key():
-            return max_node.key
-        else:
-            return max_node.val
+        return max_node.key
 
     def _min_value_node(self, node):
-        """The node with the minimum value (or key if exists) of a (sub)tree
-        rooted at node. The minimum value is the node itself if it has no
-        left subtree."""
+        """
+        Return the node with the minimum key in a
+        (sub)tree rooted at node. The minimum value
+        is the node itself if it has no left subtree.
+        """
         if node is None:
-            return None
+            return node
         if node.left_child:
             return self._min_value_node(node.left_child)
         else:
             return node
 
     def _min_value(self, node):
-        """The minimum value (or key if exists) of a (sub)tree rooted at node.
-        The minimum value is the node itself if it has no left subtree."""
+        """
+        Return the minimum key in a (sub)tree rooted at node.
+        The minimum value is the node itself if it has no
+        left subtree. Return False if the node does not exist.
+        """
         min_node = self._min_value_node(node)
         if min_node is None:
             return False
-        if min_node.has_key():
-            return min_node.key
-        else:
-            return min_node.val
+        return min_node.key
 
     def to_ordered_list(self, node, ordered_list):
-        """Convert the tree into an in-ordered list of nodes.
-        The list is stored at ordered_list parameter."""
+        """
+        Convert the tree into an in-ordered list of nodes. The list is stored in 'ordered_list'."""
         if node is None:
             return ordered_list
-
         if node.left_child:
             self.to_ordered_list(node.left_child, ordered_list)
         ordered_list.append(node)
@@ -222,7 +231,7 @@ class BinarySearchTree(object):
         """Print out the tree in-order."""
         ordered_list = list()
         self.to_ordered_list(self.root, ordered_list)
-        printout = ""
+        printout = str()
         for node in ordered_list:
             if node.key:
                 printout += "{key}({value}) ".format(key=node.key, value=node.val)
