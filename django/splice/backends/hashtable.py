@@ -85,13 +85,13 @@ if __name__ == "__main__":
     ht = NameNumHashTable(name=["Luke", "Andre", "Zack"], num=[14, 9, 12], key="name")
     ht.save()
     print("Enumerating a string-keyed hash table:")
-    for key, value in NameNumHashTable.objects.struct:
+    for key, value in NameNumHashTable.objects:
         print("* {key} (hash: {hash}) -> {value}".format(key=key,
                                                          hash=key.__hash__(),
-                                                         value=NameNumHashTable.objects.get(key)))
+                                                         value=value))
     NameNumHashTable.objects.synthesize("Blair")
     print("After deleting 'Blair' by synthesis, enumerate again:")
-    for key, value in NameNumHashTable.objects.struct:
+    for key, value in NameNumHashTable.objects:
         print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
                                                                                    hash=key.__hash__(),
                                                                                    value=NameNumHashTable.
@@ -112,13 +112,13 @@ if __name__ == "__main__":
     ht = NumNameHashTable(name=["Luke", "Andre", "Zack"], num=[14, 9, 12], key="num")
     ht.save()
     print("Enumerating an int-keyed hash table:")
-    for key, value in NumNameHashTable.objects.struct:
+    for key, value in NumNameHashTable.objects:
         print("* {key} (hash: {hash}) -> {value}".format(key=key,
                                                          hash=key.__hash__(),
                                                          value=NumNameHashTable.objects.get(key)))
     NumNameHashTable.objects.synthesize(32_345_435_432_758_439_203_535_345_435)
     print("After deleting '32345435432758439203535345435' by synthesis, enumerate again:")
-    for key, value in NumNameHashTable.objects.struct:
+    for key, value in NumNameHashTable.objects:
         print("* {key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
                                                                                         hash=key.__hash__(),
                                                                                         value=NumNameHashTable.
@@ -137,13 +137,13 @@ if __name__ == "__main__":
     ht = NameNumDict(name=["Luke", "Andre", "Zack"], num=[14, 9, 12], key="name")
     ht.save()
     print("Enumerating a string-keyed hash table:")
-    for key, value in NameNumDict.objects.struct.items():
+    for key in NameNumDict.objects:
         print("* {key} (hash: {hash}) -> {value}".format(key=key,
                                                          hash=key.__hash__(),
                                                          value=NameNumDict.objects.get(key)))
     NameNumDict.objects.synthesize("Luke")
     print("After deleting 'Luke' by synthesis, enumerate again:")
-    for key, value in NameNumDict.objects.struct.items():
+    for key in NameNumDict.objects:
         print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
                                                                                    hash=key.__hash__(),
                                                                                    value=NameNumDict.objects.get(key),
@@ -151,7 +151,7 @@ if __name__ == "__main__":
 
     NameNumDict.objects.delete("Andre")
     print("After deleting 'Andre' by calling delete(), enumerate again:")
-    for key, value in NameNumDict.objects.struct.items():
+    for key in NameNumDict.objects:
         print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
                                                                                    hash=key.__hash__(),
                                                                                    value=NameNumDict.objects.get(key),

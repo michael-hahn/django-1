@@ -1,4 +1,4 @@
-"""Binary search tree backend"""
+"""Sorted list backend."""
 
 from django.splice.structures.sortedlist import SynthesizableSortedList
 from django.splice.backends.base import BaseStruct
@@ -6,9 +6,8 @@ from django.splice.backends.base import BaseStruct
 
 class BaseSortedList(BaseStruct):
     def __init__(self):
-        """Create a new data structure instance."""
-        struct = SynthesizableSortedList()
-        super().__init__(struct)
+        """Create a new data structure backend for Sorted List."""
+        super().__init__(SynthesizableSortedList())
 
     def save(self, data):
         if isinstance(data, list):
@@ -42,13 +41,13 @@ if __name__ == "__main__":
     nsl.save()
     nsl = NameSortedList(name=["Luke", "Andre", "Zack"])
     nsl.save()
-    print("NameSortedList: {}".format(NameSortedList.objects.struct))
+    print("NameSortedList: {}".format(NameSortedList.objects))
     NameSortedList.objects.synthesize(2)
-    print("NameSortedList (after synthesizing Jake): {}".format(NameSortedList.objects.struct))
+    print("NameSortedList (after synthesizing Jake): {}".format(NameSortedList.objects))
     NameSortedList.objects.synthesize(0)
-    print("NameSortedList (after synthesizing Andre): {}".format(NameSortedList.objects.struct))
+    print("NameSortedList (after synthesizing Andre): {}".format(NameSortedList.objects))
     NameSortedList.objects.synthesize(4)
-    print("NameSortedList (after synthesizing Zack): {}".format(NameSortedList.objects.struct))
+    print("NameSortedList (after synthesizing Zack): {}".format(NameSortedList.objects))
     print("nsl[1] = {value}".format(value=NameSortedList.objects.get(1)))
     try:
         print("nsl[2] = {value}".format(value=NameSortedList.objects.get(2)))
@@ -67,21 +66,21 @@ if __name__ == "__main__":
     nsl.save()
     nsl = NumberSortedList(num=[14, 9, 12])
     nsl.save()
-    print("NumberSortedList: {}".format(NumberSortedList.objects.struct))
+    print("NumberSortedList: {}".format(NumberSortedList.objects))
     NumberSortedList.objects.synthesize(2)
-    print("NumberSortedList (after synthesizing 9): {}".format(NumberSortedList.objects.struct))
+    print("NumberSortedList (after synthesizing 9): {}".format(NumberSortedList.objects))
     NumberSortedList.objects.synthesize(0)
-    print("NumberSortedList (after synthesizing 5): {}".format(NumberSortedList.objects.struct))
+    print("NumberSortedList (after synthesizing 5): {}".format(NumberSortedList.objects))
     NumberSortedList.objects.synthesize(4)
-    print("NumberSortedList (after synthesizing 14): {}".format(NumberSortedList.objects.struct))
+    print("NumberSortedList (after synthesizing 14): {}".format(NumberSortedList.objects))
     print("nsl[3] = {value}".format(value=NumberSortedList.objects.get(3)))
     print("nsl[4] = {value}".format(value=NumberSortedList.objects.get(4)))
     NumberSortedList.objects.delete(6)
-    print("NumberSortedList (after deleting 6): {}".format(NumberSortedList.objects.struct))
+    print("NumberSortedList (after deleting 6): {}".format(NumberSortedList.objects))
     nsl = NumberSortedList(num=[45, 0, 13])
     nsl.save()
-    print("NumberSortedList (after updating with 45, 0, 13): {}".format(NumberSortedList.objects.struct))
-    for i in range(len(NumberSortedList.objects.struct)):
+    print("NumberSortedList (after updating with 45, 0, 13): {}".format(NumberSortedList.objects))
+    for i in range(len(NumberSortedList.objects)):
         print("* nsl[{i}] = {value} "
               "(Synthesized: {synthesized})".format(i=i,
                                                     value=NumberSortedList.objects.get(i),

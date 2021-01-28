@@ -30,6 +30,14 @@ class BaseStruct(object):
         """
         raise NotImplementedError('subclasses of BaseStruct must provide a delete() method')
 
+    def find(self, *args, **kwargs):
+        """
+        All concrete data structure backends can optionally implement this interface
+        to check if data exists in the data structure. Flexible parameterization.
+        Some data structures may simply opt to use __contains__ only.
+        """
+        raise NotImplementedError('this data structure does not support find() method')
+
     def synthesize(self, *args, **kwargs):
         """
         All concrete data structure backends must implement this interface
@@ -40,3 +48,15 @@ class BaseStruct(object):
     def __str__(self):
         """Use __str__ of the data structure itself (if defined)."""
         return self.struct.__str__()
+
+    def __iter__(self):
+        """Use __iter__ of the data structure itself (if defined)."""
+        return self.struct.__iter__()
+
+    def __len__(self):
+        """Use __len__ of the data structure itself (if defined)."""
+        return self.struct.__len__()
+
+    def __contains__(self, item):
+        """Use __contains__ of the data structure itself (if defined)."""
+        return self.struct.__contains__()
