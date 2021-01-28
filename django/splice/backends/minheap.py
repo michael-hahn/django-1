@@ -1,4 +1,4 @@
-"""Binary search tree backend"""
+"""MinHeap backend."""
 
 from django.splice.structures.minheap import SynthesizableMinHeap
 from django.splice.backends.base import BaseStruct
@@ -6,9 +6,8 @@ from django.splice.backends.base import BaseStruct
 
 class BaseMinHeap(BaseStruct):
     def __init__(self):
-        """Create a new data structure instance."""
-        struct = SynthesizableMinHeap()
-        super().__init__(struct)
+        """Create a new data structure backend for MinHeap."""
+        super().__init__(SynthesizableMinHeap())
 
     def save(self, data):
         if isinstance(data, list):
@@ -17,13 +16,11 @@ class BaseMinHeap(BaseStruct):
         else:
             self.struct.add(data=data)
 
-    def get(self, key):
-        """Key is not used."""
+    def get(self):
         return self.struct.get()
 
-    def delete(self, key):
-        """key is not used."""
-        return self.struct.delete()
+    def delete(self):
+        return self.struct.pop()
 
     def synthesize(self, index):
         return self.struct.synthesize(index)
@@ -45,10 +42,10 @@ if __name__ == "__main__":
     mh = NumberMinHeap(num=[5, 12, 5, 7, 1])
     mh.save()
     print("Initial int min heap:\n{mh}".format(mh=NumberMinHeap.objects.struct))
-    print("Before synthesizing min, we can get min value: {min}".format(min=NumberMinHeap.objects.get(0)))
+    print("Before synthesizing min, we can get min value: {min}".format(min=NumberMinHeap.objects.get()))
     NumberMinHeap.objects.synthesize(0)
     print("After synthesizing min:\n{mh}".format(mh=NumberMinHeap.objects.struct))
-    print("Now if we get min value: {min}".format(min=NumberMinHeap.objects.get(0)))
+    print("Now if we get min value: {min}".format(min=NumberMinHeap.objects.get()))
     NumberMinHeap.objects.synthesize(2)
     print("After synthesizing an intermediate value:\n{mh}".format(mh=NumberMinHeap.objects.struct))
 
@@ -64,7 +61,7 @@ if __name__ == "__main__":
     mh = NameMinHeap(name=["Luke", "Andre", "Zack", "Tommy", "Sandra"])
     mh.save()
     print("Initial str min heap:\n{mh}".format(mh=NumberMinHeap.objects.struct))
-    NumberMinHeap.objects.delete(0)
+    NumberMinHeap.objects.delete()
     print("After popping the min value:\n{mh}".format(mh=NumberMinHeap.objects.struct))
     NumberMinHeap.objects.synthesize(0)
     print("After synthesizing min:\n{mh}".format(mh=NumberMinHeap.objects.struct))
