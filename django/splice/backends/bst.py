@@ -37,8 +37,8 @@ class BaseBST(BaseStruct):
     def delete(self, key):
         return self.struct.delete(key)
 
-    def synthesize(self, node):
-        return self.struct.synthesize(node)
+    def synthesize(self, key):
+        return self.struct.synthesize(key)
 
 
 if __name__ == "__main__":
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     bst = NameNumBST(name=["Andre", "Zack"], num=[9, 12], key="name")
     bst.save()
     print("Flattened key-value tree (before synthesis): {}".format(str(NameNumBST.objects)))
-    print("Synthesizing root node success: {}".format(NameNumBST.objects.synthesize(NameNumBST.objects.struct.root)))
+    print("Synthesizing root node success: {}".format(NameNumBST.objects.synthesize("Jake")))
     print("Flattened key-value tree (after synthesis): {}".format(str(NameNumBST.objects)))
 
     class NameOnlyBST(Struct):
@@ -77,5 +77,5 @@ if __name__ == "__main__":
     bst = NameOnlyBST(name="Zack")
     bst.save()
     print("Flattened value-only tree (before synthesis): {}".format(str(NameOnlyBST.objects)))
-    print("Synthesizing root node success: {}".format(NameNumBST.objects.synthesize(NameOnlyBST.objects.struct.root)))
+    print("Synthesizing root node success: {}".format(NameOnlyBST.objects.synthesize("Jake")))
     print("Flattened value-only tree (after synthesis): {}".format(str(NameOnlyBST.objects)))

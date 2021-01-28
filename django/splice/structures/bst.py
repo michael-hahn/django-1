@@ -233,7 +233,7 @@ class BinarySearchTree(object):
 
 class SynthesizableBST(BinarySearchTree):
     """The synthesizable version of binary search tree."""
-    def synthesize(self, node):
+    def synthesize(self, key_or_val):
         """Synthesize the val (or key if exists) of a node.
         Only performs bounded value synthesis if both upper
         and lower bound exist for the node. Otherwise, create
@@ -241,6 +241,9 @@ class SynthesizableBST(BinarySearchTree):
         and with the synthesized flag set. If synthesis
         failed for any reason, return False. If synthesis
         succeeded, return True."""
+        node = self.find(key_or_val)
+        if node is None:
+            return False
         upper_bound = self._min_value(node.right_child)
         lower_bound = self._max_value(node.left_child)
         # Initialize a synthesizer based on the type of
