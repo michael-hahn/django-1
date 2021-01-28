@@ -1,4 +1,5 @@
-"""Hash table, synthesizable hash table, and synthesizable dict"""
+"""Hash table, synthesizable hash table, and synthesizable dict."""
+
 from collections import UserDict
 
 from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
@@ -6,10 +7,12 @@ from django.splice.synthesis import IntSynthesizer, StrSynthesizer
 
 
 class HashTable(object):
-    """Our own simple implementation of a hash table (instead of Python's dict).
+    """
+    Our own simple implementation of a hash table (instead of Python's dict).
     This is for demonstration only. Performance can degrade dramatically with
     more insertions since we do not perform rehashing and so more elements will
-    be chained in the same bucket as the size continues to grow."""
+    be chained in the same bucket as the size of hash table continues to grow.
+    """
     DEFAULT_NUM_BUCKETS = 10
 
     def __init__(self, *args, **kwargs):
@@ -66,25 +69,26 @@ class HashTable(object):
         return sum([len(sublist) for sublist in self._hash_table])
 
     def __contains__(self, item):
-        """Called when using the in operator."""
+        """Called when using the "in" operator."""
         return item in self.keys()
 
 
 class SynthesizableHashTable(HashTable):
-    """Inherit from HashTable to create a custom HashTable
+    """
+    Inherit from HashTable to create a custom HashTable
     that behaves exactly like a HashTable but the elements
-    in the SynthesizableHashTable can be synthesized."""
+    in the SynthesizableHashTable can be synthesized.
+    """
     def synthesize(self, key):
-        """Synthesize a given key in the hash table only if key already
+        """
+        Synthesize a given key in the hash table only if key already
         exists in the hash table. The synthesized key must ensure that
         the hash of the synthesized key is the same as that of the original.
         The value of the corresponding key does not change. If synthesis
         succeeded, return True. Returns False if key does not exist in the
         hash table (and therefore no synthesis took place). key's hash
         function must be Z3-friendly for synthesis to be possible.
-
-        Here we inherit HashTable before BaseSynthesizableStruct
-        for the same reason as in SynthesizableIntSet."""
+        """
         hash_key = key.__hash__() % len(self._hash_table)
         bucket = self._hash_table[hash_key]
         for i, kv in enumerate(bucket):
@@ -113,13 +117,13 @@ class SynthesizableHashTable(HashTable):
 
 
 class SynthesizableDict(UserDict):
-    """Inherit from UserDict to create a custom dict that
+    """
+    Inherit from UserDict to create a custom dict that
     behaves exactly like Python's built-in dict but the
     elements in the SynthesizableDict can be synthesized.
     UserDict is a wrapper/adapter class around the built-in
     dict, which makes the painful process of inheriting
-    directly from Python's built-in dict class much easier.
-    Reference:
+    directly from Python's built-in dict class much easier:
     https://docs.python.org/3/library/collections.html#userdict-objects.
 
     Alternatively, we can use abstract base classes in
@@ -127,14 +131,14 @@ class SynthesizableDict(UserDict):
     use MutableMapping as a mixin class to inherit. ABC makes
     modifying a data structure's core functionality easier
     than directly modifying it from dict.
-
-    Here we inherit BaseSynthesizableStruct before UserDict
-    because UserDict is not designed for multi-inheritance."""
+    """
     def synthesize(self, key):
-        """dict does not provide a programmatic way to access
-        and overwrite keys in-place. Since UserDict (as well
-        as MutableMapping for that matter) uses Python
-        built-in key, we have to delete the original key."""
+        """
+        dict does not provide a programmatic way to access
+        and overwrite a key in-place. Since UserDict (as well
+        as MutableMapping for that matter) uses Python's
+        built-in keys, we have to delete the original key.
+        """
         if key not in self.data:
             return False
         val = self.data[key]

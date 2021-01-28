@@ -1,4 +1,4 @@
-"""Hash Table backend"""
+"""Hash Table backend."""
 
 from django.splice.structures.hashtable import SynthesizableHashTable, SynthesizableDict
 from django.splice.backends.base import BaseStruct
@@ -7,11 +7,11 @@ from django.splice.untrustedtypes import to_untrusted
 
 class BaseHashTable(BaseStruct):
     def __init__(self):
-        """Create a new data structure instance."""
-        struct = SynthesizableHashTable()
-        super().__init__(struct)
+        """Create a new data structure backend for hash table."""
+        super().__init__(SynthesizableHashTable())
 
     def save(self, data):
+        """'data' can be a (key, value) tuple, or a list of (key, value) tuples."""
         if isinstance(data, tuple):
             self.struct.__setitem__(key=data[0], value=data[1])
         elif isinstance(data, list):
@@ -40,11 +40,11 @@ class BaseHashTable(BaseStruct):
 
 class BaseDict(BaseStruct):
     def __init__(self):
-        """Create a new data structure instance."""
-        struct = SynthesizableDict()
-        super().__init__(struct)
+        """Create a new data structure backend for dict."""
+        super().__init__(SynthesizableDict())
 
     def save(self, data):
+        """'data' can be a (key, value) tuple, or a list of (key, value) tuples."""
         if isinstance(data, tuple):
             self.struct[data[0]] = data[1]
         elif isinstance(data, list):
