@@ -1,6 +1,5 @@
-"""
-Untrusted classes
-"""
+"""Untrusted classes."""
+
 from collections import UserString
 from decimal import Decimal
 
@@ -11,15 +10,19 @@ import warnings
 
 # DEBUGGING FUNCTIONS #################################################################################################
 def synthesis_debug(func):
-    """A function decorator used to decorate modified
+    """
+    A function decorator used to decorate modified
     functions in the original Django framework for
-    debugging our imposed synthesis framework."""
+    debugging our imposed synthesis framework.
+    """
     @functools.wraps(func)
     def get_class(method):
-        """Get the class that defines the called function/method.
-        It is unlikely that we encounter all cases defined below,
-        but just for completeness.
-        Ref: https://stackoverflow.com/a/25959545/9632613."""
+        """
+        Get the class that defines the called function/method.
+        It is unlikely that we encounter all cases defined
+        below, but just for completeness:
+        https://stackoverflow.com/a/25959545/9632613.
+        """
         # If the method is a partial function
         if isinstance(method, functools.partial):
             return get_class(method.func)
@@ -166,10 +169,12 @@ def add_synthesis(func):
 
 
 def untrustify(func):
-    """A function decorator that converts all trusted args and kwargs
+    """
+    A function decorator that converts all trusted args and kwargs
     to their untrusted version. Values that cannot be untrustified
     will remain. This conversion always set the synthesized flag to False
-    unless the value is already untrusted and it has a True synthesized flag."""
+    unless the value is already untrusted and it has a True synthesized flag.
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         args = list(args)
@@ -189,10 +194,12 @@ def untrustify(func):
 
 
 def synthesis_check(func, warn):
-    """A function decorator factory which builds various function decorator
+    """
+    A function decorator factory which builds various function decorator
     depends on warn parameter. Overall it checks if a synthesized value is
     returned from the original func. If warn is True, only warning is output;
-    otherwise, ValueError is raised."""
+    otherwise, ValueError is raised.
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         synthesized = False
@@ -220,7 +227,8 @@ synthesis_error = functools.partial(synthesis_check, warn=False)
 
 
 def add_synthesis_to_func(cls):
-    """A class decorator that decorates all functions in cls
+    """
+    A class decorator that decorates all functions in cls
     so that they are synthesis-aware. If cls is a subclass of
     some base classes, then we want functions in base class to be
     synthesis-aware as well.
@@ -232,12 +240,13 @@ def add_synthesis_to_func(cls):
     base class). Using this convention, developers can prevent
     base class functions from being decorated by overriding the
     function (and just calling base class function in the override).
-    If, for example, the developer needs to override a dunder function,
+    If, for example, the developer needs to override a __dunder__ function,
     and the overridden function needs to be decorated, they should first
     implement a helper function '_synthesize__dunder__' and then
-    call the helper function in the dunder function. As such,
+    call the helper function in the __dunder__ function. As such,
     _synthesize__dunder__ will be decorated (and therefore the
-    calling dunder function)."""
+    calling __dunder__ function).
+    """
     # set of callable function names already been decorated/inspected
     handled_funcs = set()
     # First handle all functions in cls class
@@ -268,11 +277,12 @@ def add_synthesis_to_func(cls):
     # traditional MRO calling order!
     # Note that __dict__, __module__, __doc__ are not callable
     # so they will not be decorated in the first place.
-    handled_funcs.update({'__repr__',
-                          '__getattribute__',
+    handled_funcs.update({'__getattribute__',
                           '__new__',
                           '__format__',
                           '__class__',
+                          '__del__',
+                          '__dir__',
                           })
     # __mro__ defines the list of *ordered* base classes
     # (the first being cls and the second being UntrustedMixin).
@@ -312,11 +322,12 @@ def add_synthesis_to_func(cls):
 
 
 class UntrustedMixin(object):
-    """A Mixin class for adding the Untrusted feature to other classes.
+    """
+    A Mixin class for adding the Untrusted feature to other classes.
 
     Important note: for __init_subclass__'s add_synthesis_to_func() to work
-    correct, UntrustedMixin must used as the *first* parent class in a subclass."""
-
+    correct, UntrustedMixin must used as the *first* parent class in a subclass.
+    """
     def __init__(self, synthesized=False, *args, **kwargs):
         """A synthesized flag to id if a value is synthesized."""
         # Forwards all unused arguments to other base classes down the MRO line.
@@ -324,14 +335,14 @@ class UntrustedMixin(object):
         super().__init__(*args, **kwargs)
 
     def __init_subclass__(cls, **kwargs):
-        """Whenever a class inherits from this, this function is called on that class,
+        """
+        Whenever a class inherits from this, this function is called on that class,
         so that we can change the behavior of subclasses. This is closely related to
         class decorators, but where class decorators only affect the specific class
         they’re applied to, __init_subclass__ solely applies to future subclasses of
-        the class defining the method.
-
-        Here we use both __init_subclass__ and class decorator, so that a subclass
-        of UntrustedMixin and its subclasses can be decorated."""
+        the class defining the method. Here we use both __init_subclass__ and class
+        decorator, so that a subclass of UntrustedMixin and its subclasses can be decorated.
+        """
         super().__init_subclass__(**kwargs)
         add_synthesis_to_func(cls)
 
@@ -369,8 +380,8 @@ class UntrustedMixin(object):
 
     #  UPDATE: We decide to still override __int__ here to simply DISALLOW the use
     #          of int() altogether on UntrustedInt.
-    def __int__(self):
-        raise TypeError("cannot use int() to coerce to int. Use to_trusted() instead.")
+    # def __int__(self):
+    #     raise TypeError("cannot use int() to coerce to int. Use to_trusted() instead.")
 
     #  We comment out the following code for the same reason as in __int__ above.
     # @add_synthesis
@@ -396,10 +407,13 @@ class UntrustedMixin(object):
     #  UntrustedStr to str using str() or __str__; we want a more explicit casting call.
     #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
     #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
-    #  to cast UntrustedStr.
-    # TODO: REMOVE THIS METHOD ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
+    #  to cast UntrustedStr. The same applies to __repr__ (and repr()).
+    # TODO: REMOVE __str__ and __repr__ ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
     def __str__(self):
         return super().__str__()
+
+    def __repr__(self):
+        return super().__repr__()
 
     def to_trusted(self, forced=False):
         """Convert a value to its corresponding trusted type. Conversion results in
@@ -435,8 +449,10 @@ class UntrustedMixin(object):
 
 
 class UntrustedInt(UntrustedMixin, int):
-    """Subclass Python builtin int class and Untrusted Mixin.
-    Note that synthesized is a keyed parameter."""
+    """
+    Subclass Python builtin int class and Untrusted Mixin.
+    Note that synthesized is a *keyed* parameter.
+    """
     def __new__(cls, x, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, x, *args, **kwargs)
         return self
@@ -446,24 +462,29 @@ class UntrustedInt(UntrustedMixin, int):
 
     @staticmethod
     def default_hash(input_integer):
-        """Default hash function if no hash
-        function is provided by the user."""
+        """
+        Default hash function if no hash
+        function is provided by the user.
+        """
         return input_integer % (2 ** 63 - 1)
 
     custom_hash = default_hash
 
     @classmethod
     def set_hash(cls, new_hash_func):
-        """Allows a developer to provide a custom hash
+        """
+        Allows a developer to provide a custom hash
         function. The hash function must take an integer
-        and returns an integer.
-
-        Hash function must be Z3 friendly."""
+        and returns an integer. Hash function must be
+        Z3 friendly.
+        """
         cls.custom_hash = new_hash_func
 
     def __hash__(self):
-        """Override hash function to use either our default
-        hash or the user-provided hash function."""
+        """
+        Override hash function to use either our default
+        hash or the user-provided hash function.
+        """
         return type(self).custom_hash(self)
 
 
@@ -478,8 +499,10 @@ class UntrustedFloat(UntrustedMixin, float):
 
 
 class UntrustedDecimal(UntrustedMixin, Decimal):
-    """Subclass Python decimal module's Decimal class and Untrusted Mixin.
-    Decimal is immutable, so we should override __new__ and not just __init__."""
+    """
+    Subclass Python decimal module's Decimal class and Untrusted Mixin.
+    Decimal is immutable, so we should override __new__ and not just __init__.
+    """
     def __new__(cls, value="0", context=None, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, value, context, *args, **kwargs)
         return self
@@ -489,17 +512,21 @@ class UntrustedDecimal(UntrustedMixin, Decimal):
 
 
 class UntrustedStr(UntrustedMixin, UserString):
-    """Subclass collections module's UserString to create
+    """
+    Subclass collections module's UserString to create
     a custom str class that behaves like Python's built-in
     str but allows further customization. Use UntrustedMixin
-    to add the untrusted feature for the class."""
+    to add the untrusted feature for the class.
+    """
     def __init__(self, seq, *, synthesized=False):
         super().__init__(synthesized, seq)
 
     @staticmethod
     def default_hash(input_bytes):
-        """Default hash function if no hash
-        function is provided by the user."""
+        """
+        Default hash function if no hash
+        function is provided by the user.
+        """
         h = 0
         for byte in input_bytes:
             h = h * 31 + byte
@@ -509,24 +536,35 @@ class UntrustedStr(UntrustedMixin, UserString):
 
     @classmethod
     def set_hash(cls, new_hash_func):
-        """Allows a developer to provide a custom hash
+        """
+        Allows a developer to provide a custom hash
         function. The hash function must take a list of
         bytes and returns an integer; each byte should
         represent one character in string (in ASCII).
-
-        Hash function must be Z3 friendly."""
+        Hash function must be Z3 friendly.
+        """
         cls.custom_hash = new_hash_func
 
     def __hash__(self):
-        """Override UserStr hash function to use either
-        the default or the user-provided hash function."""
+        """
+        Override UserStr hash function to use either
+        the default or the user-provided hash function.
+        """
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
 
 
 class UntrustedObject(UntrustedMixin):
-    """To convert objects that cannot use other trusted types.
-     Subclass only UntrustedMixin to add the untrusted feature."""
+    """
+    Convert objects that cannot use other trusted types. We
+    subclass only UntrustedMixin to add the untrusted feature.
+    The trusted object is stored in self._obj. Using this class
+    is typically *not* necessary and should be considered to
+    be the last resort because UntrustedObject does *not*
+    inherit any useful methods from the trusted type. Instead,
+    one should always create a new untrusted type by inheriting
+    first from UntrustedMixin and then from the original type.
+    """
     def __init__(self, obj, *, synthesized=False):
         super().__init__(synthesized)
         self._obj = obj
