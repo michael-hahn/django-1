@@ -110,7 +110,7 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 An `UntrustedDatetime` object will now behave exactly the same as a regular
 `datetime` object except that it has an additional `synthesized` attribute.
 All methods in `UntrustedDatetime` are now decorated versions of the ones in
-`datetime` which outputs untrusted values. If some methods should not output
+`datetime`, which output untrusted values. If some methods should not output
 untrusted values, you can easily override them in `UntrustedDatetime`:
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
@@ -122,18 +122,18 @@ class UntrustedDatetime(UntrustedMixin, datetime):
         # the method so that timestamp() output will not
         # be an untrusted value (note that this is just an
         # example; you probably don't want to override this
-        # function at all).
+        # method at all).
         return super().timestamp()
 ```
 You would return an `UntrustedDatetime` object in `DatetimeSynthesizer`'s
 `to_python()` and `simple_synthesis()` methods.
 
 Now that you have both `DatetimeSynthesizer` and `UntrustedDatetime`, the last step
-is to modify `init_synthesizer` in synthesis.py:
+is to modify `init_synthesizer()` in synthesis.py:
 ```angular2html
 def init_synthesizer(value, vectorized=False):
     ...
-    # Add the following elif statement only:
+    # Simply adding the following elif branch does the job:
     elif isinstance(value, UntrustedDatetime):
         return DatetimeSynthesizer()
     ...
