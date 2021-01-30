@@ -1,4 +1,5 @@
-"""Synthesis classes"""
+"""Synthesis classes."""
+
 from z3 import Solver, sat
 from z3 import String, StringVal, Concat
 from z3 import Re, InRe, Union, Star, Plus
@@ -7,21 +8,24 @@ from z3 import BitVec
 from z3 import And, Or, If
 
 from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr
+from abc import ABC, abstractmethod
 
 
-class Synthesizer(object):
+class Synthesizer(ABC):
     """Synthesis base class."""
     def __init__(self, symbol):
         self.solver = Solver()
         self.var = symbol
 
     def lt_constraint(self, values, **kwargs):
-        """Add to solver a less-than constraint: values can be
+        """
+        Add to solver a less-than constraint: values can be
         a single value or a *list* of values: for v in values,
         self.var < v. By default, we assume that the type
         of the values can be handled by Z3 directly with <, such
-        as list of integer, but this is not always the case. In some
-        cases like string, this function should be overridden."""
+        as a list of integers, but this is not always the case.
+        In some cases like string, this function should be overridden.
+        """
         if isinstance(values, list):
             for v in values:
                 self.solver.add(self.var < v)
@@ -29,12 +33,14 @@ class Synthesizer(object):
             self.solver.add(self.var < values)
 
     def gt_constraint(self, values, **kwargs):
-        """Add to solver a greater-than constraint: values can
+        """
+        Add to solver a greater-than constraint: values can
         be a single value or a *list* of values: for v in
         values, self.var > v. By default, we assume that the type
         of the values can be handled by Z3 directly with >, such
-        as integer, but this is not always the case. In some
-        cases like string, this function should be overridden."""
+        as integers, but this is not always the case. In some
+        cases like string, this function should be overridden.
+        """
         if isinstance(values, list):
             for v in values:
                 self.solver.add(self.var > v)
@@ -42,29 +48,33 @@ class Synthesizer(object):
             self.solver.add(self.var > values)
 
     def eq_constraint(self, func, value, **kwargs):
-        """Add to solver an equal-to constraints:
+        """
+        Add to solver an equal-to constraints:
         func(self.var, **kwargs) == value. Note that
         func can be any custom function but operations
         in func must be supported by the Z3 variable
         type. For example, Z3's Int() does not support
         << (bit shift); therefore, func cannot have
-        operations that use << to manipulate Int() variable.
+        operations that use << to manipulate Int().
         func can take any number of *keyed* arguments
         but the first argument (required, non-keyed)
         must be the value to be synthesized. In summary,
         not all func can be supported for synthesis!
-
         Note that func can return self.var itself to
-        create a trivial equal-to constraint."""
+        create a trivial equal-to constraint.
+        """
         self.solver.add(func(self.var, **kwargs) == value)
 
     def le_constraint(self, values, **kwargs):
-        """Add to solver a less-than-or-equal-to constraint:
+        """
+        Add to solver a less-than-or-equal-to constraint:
         values can be a single value or a *list* of values:
-        for v in values, self.var < v. By default, we assume that
-        the type of the values can be handled by Z3 directly with <=,
-        such as list of integer, but this is not always the case.
-        In some cases like string, this function should be overridden."""
+        for v in values, self.var <= v. By default, we
+        assume that the type of the values can be handled
+        by Z3 directly with <=, such as a list of integers,
+        but this is not always the case. In some cases
+        like string, this function should be overridden.
+        """
         if isinstance(values, list):
             for v in values:
                 self.solver.add(self.var <= v)
@@ -72,12 +82,15 @@ class Synthesizer(object):
             self.solver.add(self.var <= values)
 
     def ge_constraint(self, values, **kwargs):
-        """Add to solver a greater-than-or-equal-to constraint:
-        values can be a single value or a *list* of values: for v in
-        values, self.var >= v. By default, we assume that the type
-        of the values can be handled by Z3 directly with >=, such
-        as integer, but this is not always the case. In some
-        cases like string, this function should be overridden."""
+        """
+        Add to solver a greater-than-or-equal-to constraint:
+        values can be a single value or a *list* of values:
+        for v in values, self.var >= v. By default, we assume
+        that the type of the values can be handled by Z3
+        directly with >=, such as integers, but this is not
+        always the case. In some cases like string, this
+        function should be overridden.
+        """
         if isinstance(values, list):
             for v in values:
                 self.solver.add(self.var >= v)
@@ -85,15 +98,17 @@ class Synthesizer(object):
             self.solver.add(self.var >= values)
 
     def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
-        """Add to solver constraints derived from an upper bound and
+        """
+        Add to solver constraints derived from an upper bound and
         a lower bound (not inclusive), both of which must exist (if
         not, call either lt_constraint() or gt_constraint() instead).
-        Subclass can override this function if the synthesizer
+        A subclass can override this function if the synthesizer
         allows different bounded constraints. Note that this function
-        is implemented mostly for convenience; In most cases, one can
-        easily combine lt_constraint() and gt_constraint() to create
-        the same bounded constraints. In some cases like string,
-        however, this function should be overridden."""
+        is implemented mostly for convenience; In most all cases,
+        one can easily combine lt_constraint() and gt_constraint()
+        to create the same bounded constraints. In some cases like
+        string, however, this function should be overridden.
+        """
         self.lt_constraint(upper_bound)
         self.gt_constraint(lower_bound)
 
@@ -103,33 +118,47 @@ class Synthesizer(object):
 
     @property
     def value(self):
-        """Return synthesized variable value (Z3 type) if
-        the model can be satisfied; otherwise returns None."""
+        """
+        Return synthesized variable value (Z3 type) if
+        the model can be satisfied; otherwise None.
+        """
         if self.is_satisfied():
             return self.solver.model()[self.var]
         else:
             return None
 
+    @abstractmethod
     def to_python(self, value):
-        """Convert the value of Z3 type to Untrusted
-        Python type (e.g., from z3.IntNumRef to
-        UntrustedInt) depend on the type of _var.
-        Returns None if value is None."""
+        """
+        Convert the value of Z3 type to *untrusted* Python type (e.g., from
+        z3.IntNumRef to UntrustedInt) depend on the type of _var. Return
+        None if the value is None. One can also use this function to perform
+        "double conversion" for Python types that are not supposed by Z3.
+        For example, if a customized synthesizer is designed to synthesize
+        Python's datetime value. You can define a function in the subclass
+        to convert datetime values to integers and subclass IntSynthesizer.
+        You should then override this function. In this function, `value`
+        would be a synthesized z3.IntNumRef. You can first convert it to an
+        int and then convert the integer value back to a synthesized
+        (untrusted) datetime value and return it. A subclass should always
+        override this function.
+        """
         raise NotImplementedError("to_python() is not overridden in <{subclass}>, "
                                   "subclassed from <{superclass}>.".
                                   format(subclass=self.__class__.__name__,
                                          superclass=type(self).__base__.__name__))
 
     def bounded_synthesis(self, *, upper_bound=None, lower_bound=None, **kwargs):
-        """Synthesis based on an upper and a lower bound (not inclusive),
+        """
+        Synthesis based on an upper and a lower bound (not inclusive),
         both of which must exist! The data type of upper_bound and
         lower_bound must be able to be compared and upper_bound
         must be larger than lower_bound. Subclasses can override
-        bounded_constraints() and call this function
-        as public API. bounded_constraints() can also raise
-        ValueError if given bounds are not valid. A synthesized
-        value is returned if synthesis is successful; otherwise,
-        we return None."""
+        bounded_constraints() and call this function as public API.
+        bounded_constraints() can also raise ValueError if given
+        bounds are not valid. A synthesized value is returned if
+        synthesis is successful; otherwise, we return None.
+        """
         if not upper_bound or not lower_bound:
             raise ValueError("Two bounds must be specified. Perhaps use a different"
                              "synthesis method or simply call random()?")
@@ -142,16 +171,21 @@ class Synthesizer(object):
         else:
             return None
 
+    @abstractmethod
     def simple_synthesis(self, value):
-        """Synthesis by simply wrapping value in an Untrusted type
+        """
+        Synthesis by simply wrapping a value in an untrusted type
         (e.g., wrap Int to UntrustedInt) and set the type's
-        synthesized flag to True. Returns None if value is None."""
+        synthesized flag to True. Returns None if value is None.
+        A subclass should always override this function.
+        """
         raise NotImplementedError("simple_synthesis() is not overridden "
                                   "in <{subclass}>, subclassed from <{superclass}>.".
                                   format(subclass=self.__class__.__name__,
                                          superclass=type(self).__base__.__name__))
 
     def reset_constraints(self):
+        """Remove all constraints in the solver."""
         self.solver.reset()
 
 
@@ -197,8 +231,10 @@ class FloatSynthesizer(Synthesizer):
 class BitVecSynthesizer(Synthesizer):
     """Synthesize bit vector value, subclass from Synthesizer."""
     def __init__(self, bits=32):
-        """Create a bit-vector variable in Z3
-        named b with given (32 by default) bits."""
+        """
+        Create a bit-vector variable in Z3
+        named b with given (32 by default) bits.
+        """
         super().__init__(BitVec('b', bits))
 
     def to_python(self, value):
@@ -216,8 +252,10 @@ class BitVecSynthesizer(Synthesizer):
 
 
 def printable_ascii_chars():
-    """Returns an order string of printable ASCII
-    characters we use from 0x20 (space) to 0x7E (~)"""
+    """
+    Returns an order string of printable ASCII
+    characters we use from 0x20 (space) to 0x7E (~).
+    """
     chars = str()
     for i in range(32, 127):
         chars += chr(i)
@@ -237,12 +275,13 @@ class StrSynthesizer(Synthesizer):
             # Create a default character set
             # (always add upper-case chars first)
             charset = self.DEFAULT_ASCII_CHARS
-        self._charset = charset     # String representation
+        self._charset = charset                                             # String representation
         self._chars = Union([Re(StringVal(c)) for c in self._charset])      # Z3 union representation
 
     @property
     def value(self):
-        """Return synthesized variable values (Z3 type) if
+        """
+        Return synthesized variable values (Z3 type) if
         the model can be satisfied; otherwise returns None.
         This property overrides base class value property
         because eq_constraint() might add new Z3 variables
@@ -250,7 +289,8 @@ class StrSynthesizer(Synthesizer):
         This function either returns a single Z3 String-typed
         value or a list of Z3 Int-typed value [x0, x1...],
         where x0 is the byte value of the first character,
-        x1 is the byte value of the second character, etc."""
+        x1 is the byte value of the second character, etc.
+        """
         if self.is_satisfied():
             m = dict()                      # Store variable name (str) -> Z3 value
             model = self.solver.model()
@@ -265,7 +305,8 @@ class StrSynthesizer(Synthesizer):
             return None
 
     def lt_constraint(self, value, **kwargs):
-        """Override base class lt_constraint(). We find the first character
+        """
+        Override base class lt_constraint(). We find the first character
         in value that has a smaller character and replace it with a smaller
         character picked by Z3. Every character before that would be the same
         as value and every character after that, if exists, is picked by Z3.
@@ -274,7 +315,7 @@ class StrSynthesizer(Synthesizer):
         If there is no string smaller than value, an empty string is returned.
         The constraint is a regular expression template added to the solver.
         If value is an empty string, the synthesis will always fail!
-        e.g., (assume the default charset)
+        e.g., (assume 'A' is the smallest in the character set):
         * "Jack" -> "[A-I]*"
         * "Adam" -> "A[A-Za-c]*" (the first "A" must be in template)
         * "AA" -> "A" (a shorter string)
@@ -283,7 +324,8 @@ class StrSynthesizer(Synthesizer):
         An optional offset parameter can be provided, but this is mostly
         useful for bounded synthesis. If provided, characters in position
         0 to offset would be the same in synthesized string as in value
-        (if offset < the length of the value). Offset is by default 0."""
+        (if offset < the length of the value). Offset is by default 0.
+        """
         if not value:
             # For an empty string value, we add
             # False so synthesis always return 'unsat'.
@@ -293,19 +335,22 @@ class StrSynthesizer(Synthesizer):
             self.solver.add(InRe(self.var, template))
 
     def le_constraint(self, value, **kwargs):
-        """The same rules as in lt_constraint() except that
-        the synthesized string can be the same as value."""
+        """
+        The same rules as in lt_constraint() except that
+        the synthesized string can be the same as value.
+        """
         lt_template = self._lt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, lt_template), InRe(self.var, eq_template)))
 
     def _lt_constraint(self, value, **kwargs):
-        """Helper function for lt_constraint(). Returns the template
+        """
+        Helper function for lt_constraint(). Returns the template
         to synthesize a string (or ValueError). See lt_constraint()
         for more detailed description. User should always call
-        lt_constraint() as the public API, but not this function.
-
-        value should never be an empty string in this function."""
+        lt_constraint() as the public API, not this function.
+        'value' should never be an empty string in this function.
+        """
         if isinstance(value, UntrustedStr):
             # Get str type value if value is UntrustedStr
             value = value.data
@@ -348,14 +393,15 @@ class StrSynthesizer(Synthesizer):
         return template
 
     def gt_constraint(self, value, **kwargs):
-        """Override base class gt_constraint(). We find the first character
-        in value that has a larger character and replace it (randomly) with
+        """
+        Override base class gt_constraint(). We find the first character
+        in value that has a larger character and replace it by Z3 with
         a larger character. Every character before that would be the same
         as value and every character after that, if exists, is picked by Z3.
-        If every character is value is the largest character in charset, we
+        If every character in value is the largest character in charset, we
         try to add at the end of value a new character and use a longer string.
         The constraint is a regular expression template added to the solver.
-        e.g., (assume the default charset)
+        e.g. (assume 'z' is the largest in the character set):
         * "Jack" -> "[K-Za-z][A-Za-z]*"
         * "" -> "[A-Za-z]+"
         * "z" -> "z[A-Za-z]+" (the first "z" must be in template).
@@ -363,22 +409,27 @@ class StrSynthesizer(Synthesizer):
         An optional offset parameter can be provided, but this is mostly
         useful for bounded synthesis. If provided, characters in position
         0 to offset would be the same in synthesized string as in value
-        (if offset < the length of the value). Offset is by default 0."""
+        (if offset < the length of the value). Offset is by default 0.
+        """
         template = self._gt_constraint(value, **kwargs)
         self.solver.add(InRe(self.var, template))
 
     def ge_constraint(self, value, **kwargs):
-        """The same rules as in gt_constraint() except that
-        the synthesized string can be the same as value."""
+        """
+        The same rules as in gt_constraint() except that
+        the synthesized string can be the same as value.
+        """
         gt_template = self._gt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, gt_template), InRe(self.var, eq_template)))
 
     def _gt_constraint(self, value, **kwargs):
-        """Helper function for gt_constraint(). Returns the template
+        """
+        Helper function for gt_constraint(). Returns the template
         to synthesize a string (or ValueError). See gt_constraint()
         for more detailed description. User should always call
-        gt_constraint() as the public API, but not this function."""
+        gt_constraint() as the public API, not this function.
+        """
         if isinstance(value, UntrustedStr):
             # Get str type value if value is UntrustedStr
             value = value.data
@@ -427,8 +478,10 @@ class StrSynthesizer(Synthesizer):
         return template
 
     def eq_constraint(self, func, value, **kwargs):
-        """The synthesized string is represented by a list of bytes (integers of ASCII)
-        and the func used must take a list of integers as its first positional parameter."""
+        """
+        The synthesized string is represented by a list of bytes (integers of ASCII)
+        and the func used must take a list of integers as its first positional parameter.
+        """
         # We use Z3's list comprehension to create a list of Z3 Int() variables
         chars = [Int('x%s' % i) for i in range(self.DEFAULT_MAX_CHAR_LENGTH)]
         for char in chars:
@@ -444,11 +497,13 @@ class StrSynthesizer(Synthesizer):
         self.solver.add(func(chars, **kwargs) == value)
 
     def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
-        """We cannot simply add lt_constraint() and gt_constraint() without
+        """
+        We cannot simply add lt_constraint() and gt_constraint() without
         specifying a common offset. Otherwise, it is possible that the template
         generated by lt_constraint() becomes incompatible with the template
         generated by gt_constraint() (so no string can be synthesized) even if it
-        is lexicographically possible to synthesize a string between the two bounds."""
+        is lexicographically possible to synthesize a string between the two bounds.
+        """
         upper_bound_length = len(upper_bound)
         lower_bound_length = len(lower_bound)
         bound_length = min(upper_bound_length, lower_bound_length)
@@ -485,12 +540,14 @@ class StrSynthesizer(Synthesizer):
 
 
 def init_synthesizer(value, vectorized=False):
-    """Base on the type of value, we determine which synthesizer to use.
+    """
+    Base on the type of value, we determine which synthesizer to use.
     If value is represented by bit vector, then we always init a
-    BitVecSynthesizer regardless of the type of the value."""
+    BitVecSynthesizer regardless of the type of the value.
+    """
     if vectorized:
         return BitVecSynthesizer()
-    elif isinstance(value, UntrustedInt):         # Note that int is included
+    elif isinstance(value, UntrustedInt):       # Note that int is included
         return IntSynthesizer()
     elif isinstance(value, UntrustedStr):       # Note that str is *not* included
         return StrSynthesizer()
