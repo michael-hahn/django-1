@@ -81,15 +81,18 @@ to create a synthesizer that synthesizes Python's `datetime` objects, you can:
 The code would look like this:
 ```angular2html
 class DatetimeSynthesizer(FloatSynthesizer):
-    def to_float(self, value):
+    @staticmethod
+    def to_float(value):
         # Convert value (a datetime object) to float.
 
-    def to_python(self, value):
+    @staticmethod
+    def to_python(value):
         # Override FloatSynthesizer's to_python() to
         # convert value (a float object) back to a
-        # datatime object and return an untrusted value.
+        # datetime object and return an untrusted value.
 
-    def simple_synthesis(self, value):
+    @staticmethod
+    def simple_synthesis(value):
         # Override FloatSynthesizer's simple_synthesis()
         # to return an untrusted datetime object with
         # the synthesized flag set to True.
@@ -104,6 +107,11 @@ done by subclassing both `UntrustedMixin` and `datetime` to create a new class.
 The most basic construction looks similar to this:
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        """We need to define __new__ because datetime is immutable!"""
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 ```
@@ -114,6 +122,10 @@ All methods in `UntrustedDatetime` are now decorated versions of the ones in
 untrusted values, you can easily override them in `UntrustedDatetime`:
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
@@ -138,3 +150,5 @@ def init_synthesizer(value, vectorized=False):
         return DatetimeSynthesizer()
     ...
 ```
+Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
+synthesis.py and untrustedtypes.py for reference.
