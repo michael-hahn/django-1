@@ -7,8 +7,10 @@ from z3 import Int, Real
 from z3 import BitVec
 from z3 import And, Or, If
 
-from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr
+from datetime import datetime
 from abc import ABC, abstractmethod
+
+from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedDatetime
 
 
 class Synthesizer(ABC):
@@ -127,8 +129,9 @@ class Synthesizer(ABC):
         else:
             return None
 
+    @staticmethod
     @abstractmethod
-    def to_python(self, value):
+    def to_python(value):
         """
         Convert the value of Z3 type to *untrusted* Python type (e.g., from
         z3.IntNumRef to UntrustedInt) depend on the type of _var. Return
@@ -143,10 +146,8 @@ class Synthesizer(ABC):
         (untrusted) datetime value and return it. A subclass should always
         override this function.
         """
-        raise NotImplementedError("to_python() is not overridden in <{subclass}>, "
-                                  "subclassed from <{superclass}>.".
-                                  format(subclass=self.__class__.__name__,
-                                         superclass=type(self).__base__.__name__))
+        raise NotImplementedError("to_python() is not overridden in this subclass, "
+                                  "subclassed from the abstract Synthesizer class.")
 
     def bounded_synthesis(self, *, upper_bound=None, lower_bound=None, **kwargs):
         """
@@ -171,18 +172,17 @@ class Synthesizer(ABC):
         else:
             return None
 
+    @staticmethod
     @abstractmethod
-    def simple_synthesis(self, value):
+    def simple_synthesis(value):
         """
         Synthesis by simply wrapping a value in an untrusted type
         (e.g., wrap Int to UntrustedInt) and set the type's
         synthesized flag to True. Returns None if value is None.
         A subclass should always override this function.
         """
-        raise NotImplementedError("simple_synthesis() is not overridden "
-                                  "in <{subclass}>, subclassed from <{superclass}>.".
-                                  format(subclass=self.__class__.__name__,
-                                         superclass=type(self).__base__.__name__))
+        raise NotImplementedError("simple_synthesis() is not overridden in this subclass,"
+                                  " subclassed from the abstract Synthesizer class.")
 
     def reset_constraints(self):
         """Remove all constraints in the solver."""
@@ -194,13 +194,15 @@ class IntSynthesizer(Synthesizer):
     def __init__(self):
         super().__init__(Int('var'))
 
-    def to_python(self, value):
+    @staticmethod
+    def to_python(value):
         if value is not None:
             return UntrustedInt(value.as_long(), synthesized=True)
         else:
             return None
 
-    def simple_synthesis(self, value):
+    @staticmethod
+    def simple_synthesis(value):
         if value is not None:
             return UntrustedInt(value, synthesized=True)
         else:
@@ -212,7 +214,8 @@ class FloatSynthesizer(Synthesizer):
     def __init__(self):
         super().__init__(Real('var'))
 
-    def to_python(self, value):
+    @staticmethod
+    def to_python(value):
         if value is not None:
             fraction_value = value.as_fraction()
             # Lose precision when casting into float
@@ -221,7 +224,8 @@ class FloatSynthesizer(Synthesizer):
         else:
             return None
 
-    def simple_synthesis(self, value):
+    @staticmethod
+    def simple_synthesis(value):
         if value is not None:
             return UntrustedFloat(value, synthesized=True)
         else:
@@ -237,13 +241,15 @@ class BitVecSynthesizer(Synthesizer):
         """
         super().__init__(BitVec('b', bits))
 
-    def to_python(self, value):
+    @staticmethod
+    def to_python(value):
         if value is not None:
             return UntrustedInt(value.as_long(), synthesized=True)
         else:
             return None
 
-    def simple_synthesis(self, value):
+    @staticmethod
+    def simple_synthesis(value):
         """Python can automatically convert a bit vector to int."""
         if value is not None:
             return UntrustedInt(value, synthesized=True)
@@ -516,12 +522,13 @@ class StrSynthesizer(Synthesizer):
         self.lt_constraint(upper_bound, offset=pos)
         self.gt_constraint(lower_bound, offset=pos)
 
-    def to_python(self, value):
+    @staticmethod
+    def to_python(value):
         if value is not None:
             if isinstance(value, list):
                 # Reconstruct a string from a list of Z3 Int ASCII values
                 reconstruct_str = str()
-                for i in range(self.DEFAULT_MAX_CHAR_LENGTH):
+                for i in range(StrSynthesizer.DEFAULT_MAX_CHAR_LENGTH):
                     # Only use non-null characters
                     if value[i].as_long() > 0:
                         # chr converts integer to ASCII character
@@ -532,9 +539,54 @@ class StrSynthesizer(Synthesizer):
         else:
             return None
 
-    def simple_synthesis(self, value):
+    @staticmethod
+    def simple_synthesis(value):
         if value is not None:
             return UntrustedStr(value, synthesized=True)
+        else:
+            return None
+
+
+class DatetimeSynthesizer(FloatSynthesizer):
+    """Synthesize a datetime object, subclass from FloatSynthesizer."""
+    @staticmethod
+    def to_float(value):
+        """Convert value (a datetime object) to float."""
+        return value.timestamp()
+
+    @staticmethod
+    def to_python(value):
+        """Convert value (a float object) back to a
+        datetime object and return an untrusted value."""
+        if value is not None:
+            fraction_value = value.as_fraction()
+            float_value = float(fraction_value.numerator) / float(fraction_value.denominator)
+            dt = datetime.fromtimestamp(float_value)
+            # Reconstruct an UntrustedDatetime object from a datetime
+            # object requires an indirection (you cannot just pass in
+            # datetime value to UntrustedDatetime().
+            year = dt.year
+            month = dt.month
+            day = dt.day
+            hour = dt.hour
+            minute = dt.minute
+            second = dt.second
+            microsecond = dt.microsecond
+            return UntrustedDatetime(year=year,
+                                     month=month,
+                                     day=day,
+                                     hour=hour,
+                                     minute=minute,
+                                     second=second,
+                                     microsecond=microsecond,
+                                     synthesized=True)
+        else:
+            return None
+
+    @staticmethod
+    def simple_synthesis(value):
+        if value is not None:
+            return UntrustedDatetime(value, synthesized=True)
         else:
             return None
 
@@ -553,6 +605,8 @@ def init_synthesizer(value, vectorized=False):
         return StrSynthesizer()
     elif isinstance(value, UntrustedFloat):     # Note that float is included
         return FloatSynthesizer()
+    elif isinstance(value, UntrustedDatetime):
+        return DatetimeSynthesizer()
     else:
         raise NotImplementedError("No corresponding synthesizer is found for type "
                                   "{type}. Consider vectorization.".format(type=type(value)))
