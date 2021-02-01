@@ -285,7 +285,8 @@ def add_synthesis_to_func(cls):
             continue
         # All callable functions are inspected in cls
         handled_funcs.add(key)
-        # Decorate only 'synthesis_' or '_synthesis_' prefixed functions in cls
+        # Decorate only 'synthesis_' or '_synthesis_' prefixed functions in cls.
+        # See example usage in __hash__() in UntrustedInt and UntrustedStr.
         if key.startswith("synthesis_") or key.startswith("_synthesis_"):
             setattr(cls, key, add_synthesis(value))
 
@@ -523,8 +524,14 @@ class UntrustedInt(UntrustedMixin, int):
     def __hash__(self):
         """
         Override hash function to use either our default
-        hash or the user-provided hash function.
+        hash or the user-provided hash function. This function
+        calls the helper function _synthesis_hash_() so that
+        __hash__() output can be decorated.
         """
+        return self._synthesis_hash_()
+
+    def _synthesis_hash_(self):
+        """Called by __hash__() but return a decorated value."""
         return type(self).custom_hash(self)
 
 
@@ -589,7 +596,14 @@ class UntrustedStr(UntrustedMixin, UserString):
         """
         Override UserStr hash function to use either
         the default or the user-provided hash function.
+        This function calls the helper function
+        _synthesis_hash_() so that __hash__() output
+        can be decorated.
         """
+        return self._synthesis_hash_()
+
+    def _synthesis_hash_(self):
+        """Called by __hash__() but return a decorated value."""
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
 
