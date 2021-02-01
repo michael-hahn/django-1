@@ -140,15 +140,5 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 You would return an `UntrustedDatetime` object in `DatetimeSynthesizer`'s
 `to_python()` and `simple_synthesis()` methods.
 
-Now that you have both `DatetimeSynthesizer` and `UntrustedDatetime`, the last step
-is to modify `init_synthesizer()` in synthesis.py:
-```angular2html
-def init_synthesizer(value, vectorized=False):
-    ...
-    # Simply adding the following elif branch does the job:
-    elif isinstance(value, UntrustedDatetime):
-        return DatetimeSynthesizer()
-    ...
-```
 Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
 synthesis.py and untrustedtypes.py for reference.

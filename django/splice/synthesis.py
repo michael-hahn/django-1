@@ -597,6 +597,7 @@ def init_synthesizer(value, vectorized=False):
     If value is represented by bit vector, then we always init a
     BitVecSynthesizer regardless of the type of the value.
     """
+    # TODO: We can probably automate this process in __init__.py
     if vectorized:
         return BitVecSynthesizer()
     elif isinstance(value, UntrustedInt):       # Note that int is included
@@ -605,8 +606,11 @@ def init_synthesizer(value, vectorized=False):
         return StrSynthesizer()
     elif isinstance(value, UntrustedFloat):     # Note that float is included
         return FloatSynthesizer()
+    #####################################################
+    # TODO: Add more casting here for new untrusted types
     elif isinstance(value, UntrustedDatetime):
         return DatetimeSynthesizer()
+    #####################################################
     else:
         raise NotImplementedError("No corresponding synthesizer is found for type "
                                   "{type}. Consider vectorization.".format(type=type(value)))
