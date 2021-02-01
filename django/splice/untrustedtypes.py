@@ -2,6 +2,7 @@
 
 from collections import UserString
 from decimal import Decimal
+from datetime import datetime
 
 import inspect
 import functools
@@ -86,6 +87,25 @@ def to_untrusted(value, synthesized):
         return UntrustedStr(value, synthesized=synthesized)
     #####################################################
     # TODO: Add more casting here for new untrusted types
+    elif isinstance(value, datetime):
+        # Reconstruct an UntrustedDatetime object from a datetime
+        # object requires an indirection (you cannot just pass in
+        # datetime value to UntrustedDatetime().
+        year = value.year
+        month = value.month
+        day = value.day
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        return UntrustedDatetime(year=year,
+                                 month=month,
+                                 day=day,
+                                 hour=hour,
+                                 minute=minute,
+                                 second=second,
+                                 microsecond=microsecond,
+                                 synthesized=synthesized)
     #####################################################
     #  Recursively convert values in list or other structured data
     #  Note that we do not just use list/dict/set comprehension as
@@ -380,8 +400,8 @@ class UntrustedMixin(object):
 
     #  UPDATE: We decide to still override __int__ here to simply DISALLOW the use
     #          of int() altogether on UntrustedInt.
-    # def __int__(self):
-    #     raise TypeError("cannot use int() to coerce to int. Use to_trusted() instead.")
+    def __int__(self):
+        raise TypeError("cannot use int() to coerce to int. Use to_trusted() instead.")
 
     #  We comment out the following code for the same reason as in __int__ above.
     # @add_synthesis
@@ -432,6 +452,26 @@ class UntrustedMixin(object):
             return super().__str__()
         elif isinstance(self, UntrustedDecimal):
             return Decimal(self)
+        #####################################################
+        # TODO: Add more casting here for new untrusted types
+        elif isinstance(self, UntrustedDatetime):
+            # Reconstruct an datetime object from an UntrustedDatetime
+            # object requires an indirection (the same as in to_untrusted())
+            year = self.year
+            month = self.month
+            day = self.day
+            hour = self.hour
+            minute = self.minute
+            second = self.second
+            microsecond = self.microsecond
+            return datetime(year=year,
+                            month=month,
+                            day=day,
+                            hour=hour,
+                            minute=minute,
+                            second=second,
+                            microsecond=microsecond)
+        #####################################################
         # Last resort is that a generic object is wrapped in UntrustedObject
         # This means that the "else" branch likely will never be reached.
         elif isinstance(self, UntrustedObject):
@@ -453,8 +493,8 @@ class UntrustedInt(UntrustedMixin, int):
     Subclass Python builtin int class and Untrusted Mixin.
     Note that synthesized is a *keyed* parameter.
     """
-    def __new__(cls, x, *args, synthesized=False, **kwargs):
-        self = super().__new__(cls, x, *args, **kwargs)
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
         return self
 
     def __init__(self, *args, synthesized=False, **kwargs):
@@ -490,8 +530,8 @@ class UntrustedInt(UntrustedMixin, int):
 
 class UntrustedFloat(UntrustedMixin, float):
     """Subclass Python builtin float class and Untrusted Mixin."""
-    def __new__(cls, x, *args, synthesized=False, **kwargs):
-        self = super().__new__(cls, x, *args, **kwargs)
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
         return self
 
     def __init__(self, *args, synthesized=False, **kwargs):
@@ -503,8 +543,8 @@ class UntrustedDecimal(UntrustedMixin, Decimal):
     Subclass Python decimal module's Decimal class and Untrusted Mixin.
     Decimal is immutable, so we should override __new__ and not just __init__.
     """
-    def __new__(cls, value="0", context=None, *args, synthesized=False, **kwargs):
-        self = super().__new__(cls, value, context, *args, **kwargs)
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
         return self
 
     def __init__(self, *args, synthesized=False, **kwargs):
@@ -552,6 +592,21 @@ class UntrustedStr(UntrustedMixin, UserString):
         """
         chars = bytes(self.data, 'ascii')
         return type(self).custom_hash(chars)
+
+
+class UntrustedDatetime(UntrustedMixin, datetime):
+    """
+    Subclass Python datetime module's datetime class and Untrusted Mixin.
+    datetime is immutable, so we should __new__ and not just __init__.
+    This is also an example to showcase that it is easy to create a new
+    untrusted type (class) from an existing Python class.
+    """
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
 
 
 class UntrustedObject(UntrustedMixin):
