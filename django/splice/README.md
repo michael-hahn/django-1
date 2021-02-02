@@ -16,7 +16,8 @@
   we cannot enforce `TypeError` without changing magic methods.
     * `str()` (`__str__`):  must return a string; otherwise `TypeError`. `TypeError`
       is directly raised from the language runtime, so we do not need to raise
-      `TypeError` in `__str__`. `__str__` must also return a string.
+      `TypeError` in `__str__`. `__str__` must also return a string. `print()`
+      calls `__str__`, and therefore is similarly handled.
     * `repr()` (`__repr__`): same as `str()` (`__str__`).
     * `int()` (`__int__`): coerce to `int` if returns a subclass of `int`.
       `__int__` does not enforce coercion, but we must raise `TypeError` in
@@ -37,6 +38,12 @@
     * `ascii()`: always return a string.
     * `bin()`: always return a binary string prefixed with `0b`.
     * `chr()`: always return a string.
+    * `hash()`: while `__hash__()` returns an UntrustedInt object, `hash()`
+      always returns an integer.
+    * `hex()`: always return a string.
+    * `oct()`: always return a string.
+    * `ord()`: take only a string as input (but not `UntrustedStr`) and return
+      a string.
 
 * [ ] Some built-in types are not (yet) handled by Splice.
     * `bytearray`
@@ -47,19 +54,74 @@
 
 * [ ] Some built-in functions are not yet handled by Splice.
     * `compile()`
-
+    * `format()`
+    * `range()`
 
 ### Notes
 * The following built-in functions work as intended or need not be handled:
     * `abs()`: untrusted input returns untrusted output
       (e.g., `UntrustedFloat` -> `UntrustedFloat`).
-    * `breakpoint()`: for debugging; no special handling needed.
+    * `breakpoint()`: for debugging; no special handling is needed.
     * `callable()`: test whether input appears callable. Since only non-callable
       data can be synthesized, this built-in function should always return `False`
       for trusted and untrusted data anyways.
-    * `delattr()`: delete the named attribute; no special handling needed.
+    * `delattr()`: delete the named attribute; no special handling is needed.
     * `dir()`: return a list of valid attributes/names. Its corresponding magic
       method `__dir__` needs no special handling either.
+    * `divmod()`: untrusted input returns untrusted output.
+    * `enumerate()`: untrusted input returns untrusted output.
+    * `eval()`: untrusted input returns untrusted output.
+    * `exec()`: untrusted input returns untrusted output.
+    * `filter()`: untrusted input returns untrusted output.
+    * `frozenset()`: untrusted input returns untrusted output.
+    * `getattr()`: return the value of the named attribute of an object;
+      no special handling is needed.
+    * `globals()`: return a dictionary representing the current global symbol
+      table; no special handling is needed.
+    * `hasattr()`: whether an object has the named attribute;
+      no special handling is needed.
+    * `help()`: invoke the built-in help system; no special handling is needed.
+    * `id()`: return the “identity” of an object; no special handling is needed.
+    * `input()`: no special handling is needed.
+    * `isinstance()`: whether an object is an instance of a class;
+      no special handling is needed.
+    * `issubclass()`: subclass relation check; no special handling is needed.
+    * `iter()`: return an iterator object; no special handling is needed.
+    * `list()`: we need only elements in the list to be untrusted, so no special
+      handling is needed on the list object itself.
+    * `locals()`: update and return a dictionary representing the current local
+      symbol table; no special handling is needed.
+    * `map()`: apply a function to every element in an iterable. The function
+      needs to decorate its output, but not `map()`.
+    * `max()`: untrusted input returns untrusted output.
+    * `memoryview()`: no special handling is needed.
+    * `min()`: untrusted input returns untrusted output.
+    * `next()`: retrieve the next item from the iterator; no special handling
+      is needed.
+    * `open()`: open a file and return a file object; no special handling is needed.
+    * `pow()`: untrusted input returns untrusted output.
+    * `reversed()`: return a reverse iterator; no special handling is needed.
+    * `round()`: untrusted input returns untrusted output.
+    * `set()`: we need only elements in the set to be untrusted, so no special
+      handling is needed on the set object itself.
+    * `setattr()`: assign the value to the attribute of an object; like
+      `getattr()`, no special handling is needed.
+    * `slice()`: untrusted input returns untrusted output.
+    * `sorted()`: untrusted input returns untrusted output.
+    * `sum()`: untrusted input returns untrusted output.
+    * `super()`: return a proxy object that delegates method calls to a parent
+      or sibling class; no special handling is needed.
+    * `tuple()`: we need only elements in the tuple to be untrusted, so no special
+      handling is needed on the tuple object itself.
+    * `type()`: no special handling is needed.
+    * `vars()`: return the `__dict__` attribute; no special handling is needed.
+    * `zip()`: untrusted input returns untrusted output.
+    * `__import__`: invoked by the import statement; no special handling is needed.
+
+* `len()` is decorated through built-in function override during *import*. This
+  is done in `__init__.py`. Overriding functions in the builtin module is risky
+  since all Python modules use the builtin module. For example, we encounter
+  issues when attempting to override `int()` and `float()`.
 
 ### Customize a Synthesizer
 Splice has a number of built-in synthesizers (e.g., `IntSynthesizer`, `FloatSynthesizer`,
