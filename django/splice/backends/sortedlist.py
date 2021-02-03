@@ -32,6 +32,9 @@ class BaseSortedList(BaseStruct):
     def synthesize(self, index):
         return self.struct.synthesize(index)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 if __name__ == "__main__":
     from django.splice.structs import Struct
@@ -86,9 +89,9 @@ if __name__ == "__main__":
     print("NumberSortedList (after deleting 6): {}".format(NumberSortedList.objects))
     nsl = NumberSortedList(num=[45, 0, 13])
     nsl.save()
-    print("NumberSortedList (after updating with 45, 0, 13): {}".format(NumberSortedList.objects))
-    for i in range(len(NumberSortedList.objects)):
+    print("NumberSortedList (after updating with 45, 0, 13):")
+    for i, n in enumerate(NumberSortedList.objects):
         print("* nsl[{i}] = {value} "
-              "(Synthesized: {synthesized})".format(i=i,
-                                                    value=NumberSortedList.objects.get(i),
-                                                    synthesized=NumberSortedList.objects.get(i).synthesized))
+              "(synthesized: {synthesized})".format(i=i,
+                                                    value=n,
+                                                    synthesized=n.synthesized))
