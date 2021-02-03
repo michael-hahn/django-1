@@ -32,7 +32,7 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.splice.untrustedtypes import synthesis_debug, add_synthesis
+from django.splice.untrustedtypes import add_synthesis
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
@@ -222,7 +222,6 @@ class CharField(Field):
             self.validators.append(validators.MaxLengthValidator(int(max_length)))
         self.validators.append(validators.ProhibitNullCharactersValidator())
 
-    @synthesis_debug
     @add_synthesis
     def to_python(self, value):
         """Return a string."""
@@ -264,7 +263,6 @@ class IntegerField(Field):
         if min_value is not None:
             self.validators.append(validators.MinValueValidator(min_value))
 
-    @synthesis_debug
     @add_synthesis
     def to_python(self, value):
         """
@@ -298,7 +296,6 @@ class FloatField(IntegerField):
         'invalid': _('Enter a number.'),
     }
 
-    @synthesis_debug
     @add_synthesis
     def to_python(self, value):
         """
@@ -340,7 +337,6 @@ class DecimalField(IntegerField):
         super().__init__(max_value=max_value, min_value=min_value, **kwargs)
         self.validators.append(validators.DecimalValidator(max_digits, decimal_places))
 
-    @synthesis_debug
     @add_synthesis
     def to_python(self, value):
         """
