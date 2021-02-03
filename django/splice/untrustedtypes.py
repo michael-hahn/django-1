@@ -49,11 +49,13 @@ def synthesis_debug(func):
         # Get the class that defines the called function (method)
         cls_name = get_class(func).__name__
         res = func(*args, **kwargs)
+        if isinstance(res, UntrustedMixin):
+            res = res.to_trusted()
         res_type = type(res).__name__
         print("[SYNTHESIS DEBUG] {func} (in class: {cls}) -> ({type}) {res}".format(func=func_name,
                                                                                     cls=cls_name,
                                                                                     type=res_type,
-                                                                                    res=res.to_trusted()))
+                                                                                    res=res))
         return res
 
     return wrapper
@@ -304,6 +306,7 @@ def add_synthesis_to_func(cls):
                           '__class__',
                           '__del__',
                           '__dir__',
+                          '__subclasshook__',
                           })
     # __mro__ defines the list of *ordered* base classes
     # (the first being cls and the second being UntrustedMixin).
@@ -629,10 +632,15 @@ class UntrustedObject(UntrustedMixin):
     subclass only UntrustedMixin to add the untrusted feature.
     The trusted object is stored in self._obj. Using this class
     is typically *not* necessary and should be considered to
-    be the last resort because UntrustedObject does *not*
+    be the last resort (for example, when a Python class cannot
+    be subclasses, e.g., bool) because UntrustedObject does *not*
     inherit any useful methods from the trusted type. Instead,
     one should always create a new untrusted type by inheriting
     first from UntrustedMixin and then from the original type.
+    If you must use this way to create an untrusted class, it
+    is better to use a descriptive class name (for example, you
+    may want to use this template to create "UntrustedBool",
+    instead of calling it "UntrustedObject").
     """
     def __init__(self, obj, *, synthesized=False):
         super().__init__(synthesized)
