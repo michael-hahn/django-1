@@ -8,6 +8,8 @@ import inspect
 import functools
 import warnings
 
+from django.splice.backends.base import BaseStruct
+
 
 # DEBUGGING FUNCTIONS #################################################################################################
 def synthesis_debug(func):
@@ -16,6 +18,7 @@ def synthesis_debug(func):
     functions in the original Django framework for
     debugging our imposed synthesis framework.
     """
+
     @functools.wraps(func)
     def get_class(method):
         """
@@ -59,9 +62,9 @@ def synthesis_debug(func):
         return res
 
     return wrapper
+
+
 #######################################################################################################################
-
-
 def to_untrusted(value, synthesized):
     """
     Convert a value to its corresponding untrusted
@@ -148,16 +151,11 @@ def is_synthesized(value):
     if isinstance(value, UntrustedMixin):
         return value.synthesized
     # Recursively check values in a list or other data structures
-    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set):
+    # TODO: for data structures with key/value pairs, if __iter__ returns
+    #  keys only (in the for loop), then only keys are checked for now.
+    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or \
+        isinstance(value, dict) or isinstance(value, BaseStruct):
         for v in value:
-            if is_synthesized(v):
-                synthesized = True
-                break
-    elif isinstance(value, dict):
-        for k, v in value.items():
-            if is_synthesized(k):
-                synthesized = True
-                break
             if is_synthesized(v):
                 synthesized = True
                 break
@@ -169,6 +167,7 @@ def add_synthesis(func):
     A function decorator that makes the original function (that
     may not be synthesis-aware) return untrusted values if defined.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         res = func(*args, **kwargs)
@@ -187,6 +186,7 @@ def add_synthesis(func):
                 synthesized = True
                 break
         return to_untrusted(res, synthesized)
+
     return wrapper
 
 
@@ -197,6 +197,7 @@ def untrustify(func):
     will remain. This conversion always set the synthesized flag to False
     unless the value is already untrusted and it has a True synthesized flag.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         args = list(args)
@@ -212,6 +213,7 @@ def untrustify(func):
             else:
                 kwargs[key] = to_untrusted(value, synthesized=False)
         return func(*args, **kwargs)
+
     return wrapper
 
 
@@ -222,6 +224,7 @@ def synthesis_check(func, warn):
     returned from the original func. If warn is True, only warning is output;
     otherwise, ValueError is raised.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         synthesized = False
@@ -240,6 +243,7 @@ def synthesis_check(func, warn):
             else:
                 raise RuntimeError("Synthesized value output by {func} "
                                    "should not be used at all".format(func=func.__name__))
+
     return wrapper
 
 
@@ -311,7 +315,7 @@ def add_synthesis_to_func(cls):
     # __mro__ defines the list of *ordered* base classes
     # (the first being cls and the second being UntrustedMixin).
     # UntrustedMixin should *not* be decorated, add all of its callable functions in handled_funcs
-    mixin_cls = cls.__mro__[1]      # IMPORTANT: UntrustedMixin MUST be the first parent class!
+    mixin_cls = cls.__mro__[1]  # IMPORTANT: UntrustedMixin MUST be the first parent class!
     for key in mixin_cls.__dict__:
         value = getattr(mixin_cls, key)
         if not callable(value):
@@ -352,6 +356,7 @@ class UntrustedMixin(object):
     Important note: for __init_subclass__'s add_synthesis_to_func() to work
     correct, UntrustedMixin must used as the *first* parent class in a subclass.
     """
+
     def __init__(self, synthesized=False, *args, **kwargs):
         """A synthesized flag to id if a value is synthesized."""
         # Forwards all unused arguments to other base classes down the MRO line.
@@ -497,6 +502,7 @@ class UntrustedInt(UntrustedMixin, int):
     Subclass Python builtin int class and Untrusted Mixin.
     Note that synthesized is a *keyed* parameter.
     """
+
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
         return self
@@ -540,6 +546,7 @@ class UntrustedInt(UntrustedMixin, int):
 
 class UntrustedFloat(UntrustedMixin, float):
     """Subclass Python builtin float class and Untrusted Mixin."""
+
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
         return self
@@ -553,6 +560,7 @@ class UntrustedDecimal(UntrustedMixin, Decimal):
     Subclass Python decimal module's Decimal class and Untrusted Mixin.
     Decimal is immutable, so we should override __new__ and not just __init__.
     """
+
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
         return self
@@ -568,6 +576,7 @@ class UntrustedStr(UntrustedMixin, UserString):
     str but allows further customization. Use UntrustedMixin
     to add the untrusted feature for the class.
     """
+
     def __init__(self, seq, *, synthesized=False):
         super().__init__(synthesized, seq)
 
@@ -618,6 +627,7 @@ class UntrustedDatetime(UntrustedMixin, datetime):
     This is also an example to showcase that it is easy to create a new
     untrusted type (class) from an existing Python class.
     """
+
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
         return self
@@ -642,6 +652,7 @@ class UntrustedObject(UntrustedMixin):
     may want to use this template to create "UntrustedBool",
     instead of calling it "UntrustedObject").
     """
+
     def __init__(self, obj, *, synthesized=False):
         super().__init__(synthesized)
         self._obj = obj
@@ -892,20 +903,20 @@ def untrusted_float_test():
 def untrusted_decimal_test():
     base_decimal = Decimal('3.14')
     # Make sure UntrustedDecimal can take all forms acceptable by Decimal
-    untrusted_decimal_1 = UntrustedDecimal('3.14')              # string input
+    untrusted_decimal_1 = UntrustedDecimal('3.14')  # string input
     untrusted_decimal_2 = UntrustedDecimal((0, (3, 1, 4), -2))  # tuple (sign, digit_tuple, exponent)
     assert untrusted_decimal_2 == Decimal((0, (3, 1, 4), -2)), "untrusted_decimal_2 should be 3.14, " \
                                                                "but it is {}".format(untrusted_decimal_2)
     assert type(untrusted_decimal_2) is UntrustedDecimal, "untrusted_decimal_2 type is not UntrustedDecimal"
-    untrusted_decimal_3 = UntrustedDecimal(Decimal(314))        # another decimal instance
+    untrusted_decimal_3 = UntrustedDecimal(Decimal(314))  # another decimal instance
     assert untrusted_decimal_3 == Decimal(Decimal(314)), "untrusted_decimal_3 should be 314, " \
                                                          "but it is {}".format(untrusted_decimal_3)
     assert type(untrusted_decimal_3) is UntrustedDecimal, "untrusted_decimal_3 type is not UntrustedDecimal"
-    untrusted_decimal_4 = UntrustedDecimal('  3.14 \n')         # leading and trailing whitespace is okay
+    untrusted_decimal_4 = UntrustedDecimal('  3.14 \n')  # leading and trailing whitespace is okay
     assert untrusted_decimal_4 == Decimal('  3.14 \n'), "untrusted_decimal_4 should be 3.14, " \
                                                         "but it is {}".format(untrusted_decimal_4)
     assert type(untrusted_decimal_4) is UntrustedDecimal, "untrusted_decimal_4 type is not UntrustedDecimal"
-    untrusted_decimal_5 = UntrustedDecimal(314)                 # int
+    untrusted_decimal_5 = UntrustedDecimal(314)  # int
     assert untrusted_decimal_5 == Decimal(314), "untrusted_decimal_5 should be 314, " \
                                                 "but it is {}".format(untrusted_decimal_5)
     assert type(untrusted_decimal_5) is UntrustedDecimal, "untrusted_decimal_5 type is not UntrustedDecimal"
