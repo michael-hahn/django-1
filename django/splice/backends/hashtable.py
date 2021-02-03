@@ -37,6 +37,9 @@ class BaseHashTable(BaseStruct):
         key = to_untrusted(key, synthesized=False)
         return self.struct.synthesize(key)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 class BaseDict(BaseStruct):
     def __init__(self):
@@ -68,6 +71,9 @@ class BaseDict(BaseStruct):
         key = to_untrusted(key, synthesized=False)
         return self.struct.synthesize(key)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 if __name__ == "__main__":
     from django.splice.structs import Struct
@@ -85,13 +91,13 @@ if __name__ == "__main__":
     ht = NameNumHashTable(name=["Luke", "Andre", "Zack"], num=[14, 9, 12], key="name")
     ht.save()
     print("Enumerating a string-keyed hash table:")
-    for key, value in NameNumHashTable.objects:
+    for key in NameNumHashTable.objects:
         print("* {key} (hash: {hash}) -> {value}".format(key=key,
                                                          hash=key.__hash__(),
-                                                         value=value))
+                                                         value=NameNumHashTable.objects.get(key)))
     NameNumHashTable.objects.synthesize("Blair")
     print("After deleting 'Blair' by synthesis, enumerate again:")
-    for key, value in NameNumHashTable.objects:
+    for key in NameNumHashTable.objects:
         print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
                                                                                    hash=key.__hash__(),
                                                                                    value=NameNumHashTable.
@@ -112,13 +118,13 @@ if __name__ == "__main__":
     ht = NumNameHashTable(name=["Luke", "Andre", "Zack"], num=[14, 9, 12], key="num")
     ht.save()
     print("Enumerating an int-keyed hash table:")
-    for key, value in NumNameHashTable.objects:
+    for key in NumNameHashTable.objects:
         print("* {key} (hash: {hash}) -> {value}".format(key=key,
                                                          hash=key.__hash__(),
                                                          value=NumNameHashTable.objects.get(key)))
     NumNameHashTable.objects.synthesize(32_345_435_432_758_439_203_535_345_435)
     print("After deleting '32345435432758439203535345435' by synthesis, enumerate again:")
-    for key, value in NumNameHashTable.objects:
+    for key in NumNameHashTable.objects:
         print("* {key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
                                                                                         hash=key.__hash__(),
                                                                                         value=NumNameHashTable.

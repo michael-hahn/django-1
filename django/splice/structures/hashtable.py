@@ -62,7 +62,7 @@ class HashTable(object):
     def __iter__(self):
         """Iterator over the hash table."""
         for key in self.keys():
-            yield key, self.__getitem__(key)
+            yield key
 
     def __len__(self):
         """The size of the hash table."""
