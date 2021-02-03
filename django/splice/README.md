@@ -194,6 +194,11 @@ is only used for the shortcut.
   since all Python modules use the builtin module. For example, we encounter
   issues when attempting to override `int()` and `float()`.
 
+* We considered Python's *type hints* as a language feature to enforce trusted
+  data sinks, for example, by explicitly declaring only the (trusted) types of
+  input that are acceptable by a data structure. However, the Python runtime
+  does not enforce function and variable type annotations.
+
 # To-Do's:
 * [ ] The `bool` type cannot be subclassed (unlike `int` or `float`, for example).
   This means that, for any function that returns a `bool`, we cannot coerce the
