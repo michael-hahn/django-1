@@ -59,4 +59,4 @@ class BaseStruct(object):
 
     def __contains__(self, item):
         """Use __contains__ of the data structure itself (if defined)."""
-        return self.struct.__contains__()
+        return self.struct.__contains__(item)
