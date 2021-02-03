@@ -44,6 +44,9 @@ class BaseBST(BaseStruct):
     def synthesize(self, key):
         return self.struct.synthesize(key)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 if __name__ == "__main__":
     from django.splice.structs import Struct
@@ -65,3 +68,6 @@ if __name__ == "__main__":
     print("Flattened key-value tree (before synthesis): {}".format(str(NameNumBST.objects)))
     print("Synthesizing root node success: {}".format(NameNumBST.objects.synthesize("Jake")))
     print("Flattened key-value tree (after synthesis): {}".format(str(NameNumBST.objects)))
+    print("Iterate through the key-value tree (after synthesis):")
+    for k, v in NameNumBST.objects:
+        print("* {} (synthesized: {}) -> {}".format(k, k.synthesized, v))

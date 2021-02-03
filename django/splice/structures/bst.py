@@ -246,6 +246,28 @@ class BinarySearchTree(object):
         if node.right_child:
             self.to_ordered_list(node.right_child, ordered_list)
 
+    def __iter__(self):
+        """Iterate through the tree in-order."""
+        current = self.root
+        stack = []
+        while True:
+            # Reach the left most Node of the current Node
+            if current is not None:
+                # Place pointer to a tree node on the stack
+                # before traversing the node's left subtree
+                stack.append(current)
+                current = current.left_child
+            # BackTrack from the empty subtree and visit the Node at
+            # the top of the stack; finish when the stack is empty
+            elif stack:
+                current = stack.pop()
+                yield current.key, current.val
+                # We have visited the node and its left
+                # subtree. Now, it's right subtree's turn
+                current = current.right_child
+            else:
+                break
+
     def __str__(self):
         """Print out the tree in-order."""
         ordered_list = list()
