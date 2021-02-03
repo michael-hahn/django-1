@@ -28,6 +28,9 @@ class BaseIntSet(BaseStruct):
     def synthesize(self, pos):
         return self.struct.synthesize(pos)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 if __name__ == "__main__":
     from django.splice.structs import Struct
@@ -94,8 +97,7 @@ if __name__ == "__main__":
           "{set} ({bytes} bytes)".format(set=NumberIntSet.objects,
                                          bytes=len(NumberIntSet.objects.struct._contents)))
     print("Getting all elements from intSet through get():")
-    for i in range(len(NumberIntSet.objects.struct)):
-        value = NumberIntSet.objects.get(i)
+    for i, n in enumerate(NumberIntSet.objects):
         print("* int_set[{i}] = {value} (Synthesized: {synthesized}) ".format(i=i,
-                                                                              value=value,
-                                                                              synthesized=value.synthesized))
+                                                                              value=n,
+                                                                              synthesized=n.synthesized))

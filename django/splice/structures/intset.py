@@ -195,6 +195,11 @@ class IntSet(object):
                     self._contents.pop(len(self._contents)-1)
                 self._length -= 1
 
+    def __iter__(self):
+        """Iterate through the intSet."""
+        for i in range(self._length):
+            yield self.get(i)
+
     def __str__(self):
         """The contents of intSet."""
         set_str = "[ "
