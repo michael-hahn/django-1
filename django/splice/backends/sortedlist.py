@@ -22,6 +22,13 @@ class BaseSortedList(BaseStruct):
     def delete(self, value):
         return self.struct.discard(value)
 
+    def find(self, value):
+        """
+        Return the first index of value in sorted list.
+        Raise ValueError if `value` is not present.
+        """
+        return self.struct.index(value)
+
     def synthesize(self, index):
         return self.struct.synthesize(index)
 
