@@ -199,6 +199,29 @@ is only used for the shortcut.
   input that are acceptable by a data structure. However, the Python runtime
   does not enforce function and variable type annotations.
 
+* Analogous to control-flow-based under-tainting, there exist issues related
+  to *control-flow-based trust propagation*. For example:
+  ```angular2html
+  x = UntrustedStr("x")
+  x_length = len(x)  # returns an UntrustedInt object
+  if x_length < 3:
+      y = 3          # y is a trusted int object
+  else:
+      y = x_length   # y is an UntrustedInt object
+  ```
+  In the example above, ideally `y` should always be an `UntrustedInt` object
+  regardless of the condition since the condition itself (`x_length < 3`) uses
+  an untrusted value (`x_length`) for comparison and therefore it should not be
+  trusted. However, because we cannot handle control-flow trust propagation,
+  `y` can be made trusted. The same issue also exists in list indexing:
+  ```angular2html
+  x = UntrustedInt(3)
+  y = [1, 2, 3, 4, 5]
+  z = y[x]            # z is a trusted int object
+  ```
+  In this example, ideally `z` should be an `UntrustedInt` object because it is
+  the result of an *untrusted slice* of a trusted list.
+
 # To-Do's:
 * [ ] The `bool` type cannot be subclassed (unlike `int` or `float`, for example).
   This means that, for any function that returns a `bool`, we cannot coerce the
@@ -213,9 +236,17 @@ is only used for the shortcut.
   This is enforced by the language runtime and cannot be circumvented. However,
   unlike `str()` (see below), we cannot simply just let `TypeError` to be raised
   since doing so affects many other operators than casting to `bool()`. On the
-  other hand, we suspect that failure to having an `UntrustedBool` type causes
-  issues related to *control-flow-based trustworthiness propagation* only
-  (analogous to control-flow-based under-tainting).
+  other hand, we suspect that failure to having an `UntrustedBool` type may cause
+  problems only if `bool` values are used "unorthodoxly", for example:
+  ```angular2html
+  x = UntrustedInt(5)
+  y = bool(x)         # y unfortunately is a trusted bool object
+  z = bool(x) + 1     # Now z is a trusted int object
+  ```
+  However, using a boolean value as an integer is not a common practice. More
+  likely, you would use a boolean value to manipulate control flow (or less
+  frequently as a 0/1 index), but then the issue is not really about `bool`
+  but about control-flow-based trust propagation.
 
 * [x] Some built-in functions enforce their return type, even though they can be
   overridden by their respective magic method. We raise `TypeError` if input to
