@@ -38,6 +38,9 @@ class BaseBST(BaseStruct):
     def delete(self, key):
         return self.struct.delete(key)
 
+    def find(self, key):
+        return self.struct.find(key)
+
     def synthesize(self, key):
         return self.struct.synthesize(key)
 
