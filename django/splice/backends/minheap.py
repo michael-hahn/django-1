@@ -25,6 +25,9 @@ class BaseMinHeap(BaseStruct):
     def synthesize(self, index):
         return self.struct.synthesize(index)
 
+    def __iter__(self):
+        return self.struct.__iter__()
+
 
 if __name__ == "__main__":
     from django.splice.structs import Struct
@@ -66,4 +69,6 @@ if __name__ == "__main__":
     NameMinHeap.objects.synthesize(0)
     print("After synthesizing min:\n{mh}".format(mh=NameMinHeap.objects))
     NameMinHeap.objects.synthesize(2)
-    print("After synthesizing an intermediate value:\n{mh}".format(mh=NameMinHeap.objects))
+    print("After synthesizing an intermediate value:")
+    for n in NameMinHeap.objects:
+        print("* {} (synthesized: {})".format(n, n.synthesized))
