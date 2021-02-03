@@ -45,13 +45,17 @@ class BaseStruct(object):
         """
         raise NotImplementedError('subclasses of BaseStruct must provide a synthesize() method')
 
+    def __iter__(self):
+        """
+        All concrete data structure backends must implement this interface
+        to iterate over the entire data structure. This enforces the data
+        structure or its base class to implement __iter__.
+        """
+        raise NotImplementedError('subclasses of BaseStruct must provide a __iter__ method')
+
     def __str__(self):
         """Use __str__ of the data structure itself (if defined)."""
         return self.struct.__str__()
-
-    def __iter__(self):
-        """Use __iter__ of the data structure itself (if defined)."""
-        return self.struct.__iter__()
 
     def __len__(self):
         """Use __len__ of the data structure itself (if defined)."""
