@@ -208,6 +208,15 @@ is only used for the shortcut.
     * `any()`
     * `bool()`
 
+  In fact, similar to `str()` and `__str__`, `__bool__` and `bool()` **cannot**
+  return any other type but `bool`; otherwise, you will receive a `TypeError`.
+  This is enforced by the language runtime and cannot be circumvented. However,
+  unlike `str()` (see below), we cannot simply just let `TypeError` to be raised
+  since doing so affects many other operators than casting to `bool()`. On the
+  other hand, we suspect that failure to having an `UntrustedBool` type causes
+  issues related to *control-flow-based trustworthiness propagation* only
+  (analogous to control-flow-based under-tainting).
+
 * [x] Some built-in functions enforce their return type, even though they can be
   overridden by their respective magic method. We raise `TypeError` if input to
   those functions are *untrusted* to prevent unintended or illegal coercion to

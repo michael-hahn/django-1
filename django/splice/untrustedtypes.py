@@ -78,8 +78,8 @@ def to_untrusted(value, synthesized):
     if isinstance(value, UntrustedMixin):
         value.synthesized = synthesized
         return value
-    # boolean value is always bool (bool is not extensible)
-    # bool is a subclass of int, so we must check this first
+    # bool is a subclass of int, so we must check it first
+    # bool cannot be usefully converted to an untrusted type
     elif isinstance(value, bool):
         return value
     elif isinstance(value, int):
@@ -430,6 +430,8 @@ class UntrustedMixin(object):
     def __float__(self):
         raise TypeError("cannot use float() to coerce to float. Use to_trusted() instead.")
 
+    # We wanted to override __bool__() but __bool__() must return a bool object, nothing else.
+
     #  NOTE: Unlike __int__ and __float__, __str__ and str() return TypeError: __str__ returned
     #  non-string (type UntrustedStr) if casting returns any other types than the built-in
     #  string type (e.g., UntrustedStr). This is good as we do NOT want to allow casting from
@@ -481,10 +483,13 @@ class UntrustedMixin(object):
                             second=second,
                             microsecond=microsecond)
         #####################################################
-        # Last resort is that a generic object is wrapped in UntrustedObject
-        # This means that the "else" branch likely will never be reached.
+        # Last resort is that an object is wrapped in a class
+        # inherited only from UntrustedMixin, but dong so is
+        # very much discouraged! The following code is just
+        # a placeholder, do not use.
         elif isinstance(self, UntrustedObject):
-            return self.object
+            # The trusted value is in self.data
+            return self.data
         else:
             raise RuntimeError("cannot convert an unknown untrusted type")
 
@@ -638,28 +643,30 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 
 class UntrustedObject(UntrustedMixin):
     """
-    Convert objects that cannot use other trusted types. We
-    subclass only UntrustedMixin to add the untrusted feature.
-    The trusted object is stored in self._obj. Using this class
-    is typically *not* necessary and should be considered to
-    be the last resort (for example, when a Python class cannot
-    be subclasses, e.g., bool) because UntrustedObject does *not*
-    inherit any useful methods from the trusted type. Instead,
-    one should always create a new untrusted type by inheriting
-    first from UntrustedMixin and then from the original type.
-    If you must use this way to create an untrusted class, it
-    is better to use a descriptive class name (for example, you
-    may want to use this template to create "UntrustedBool",
-    instead of calling it "UntrustedObject").
+    Convert objects that cannot inherit a trusted type. We
+    subclass only UntrustedMixin to add the type-agnostic
+    "untrusted" feature. The trusted object is stored in
+    self._data. Using this class is typically *not* necessary
+    and should be considered to be the last resort (for
+    example, if Python does not allow a class to be
+    subclassed for some reason) because this class does
+    *not* inherit any useful methods from the trusted data
+    type. Instead, whenever possible, one should always
+    create a new untrusted type by inheriting first from
+    UntrustedMixin and then from the corresponding trust
+    type (see UntrustedDatetime as a good example). If
+    you must use this way to create an untrusted class,
+    you should still use a descriptive class name. The
+    class definition here is just an example. Do not use.
     """
 
-    def __init__(self, obj, *, synthesized=False):
+    def __init__(self, data, *, synthesized=False):
         super().__init__(synthesized)
-        self._obj = obj
+        self._data = data
 
     @property
-    def object(self):
-        return self._obj
+    def data(self):
+        return self._data
 
 
 def untrusted_int_test():
