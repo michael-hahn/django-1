@@ -43,6 +43,10 @@ class MinHeap(object):
         """Return a list of all elements in the heap."""
         return self._heap
 
+    def __len__(self):
+        """Return the length of the heap."""
+        return len(self._heap)
+
     def __str__(self):
         """Make the contents of the heap into a string."""
         heap = str()
