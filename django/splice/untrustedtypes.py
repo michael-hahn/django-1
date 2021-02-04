@@ -304,13 +304,28 @@ def add_synthesis_to_func(cls):
     # traditional MRO calling order!
     # Note that __dict__, __module__, __doc__ are not callable
     # so they will not be decorated in the first place.
-    handled_funcs.update({'__getattribute__',
-                          '__new__',
-                          '__format__',
-                          '__class__',
+    handled_funcs.update({'__new__',
+                          '__init__',
                           '__del__',
+                          '__getattr__',
+                          '__getattribute__',
+                          '__setattr__',
+                          '__delattr__',
                           '__dir__',
+                          '__get__',
+                          '__set__',
+                          '__delete__',
+                          '__set_name__',
+                          '__slots__',
+                          '__prepare__',
+                          '__class__',
+                          '__iter__',
+                          '__reversed__',
+                          '__enter__',
+                          '__exit__',
                           '__subclasshook__',
+                          '__subclasscheck__',
+                          '__instancecheck__',
                           })
     # __mro__ defines the list of *ordered* base classes
     # (the first being cls and the second being UntrustedMixin).
@@ -340,11 +355,11 @@ def add_synthesis_to_func(cls):
             # will be placed at the top of the MRO), not the one
             # in any of the superclasses!
             setattr(cls, key, add_synthesis(value))
-    # NOTE: Function calling order (when called fom an UntrustedX object) --
-    # 1. Original cls (UntrustedX) functions (decorated and non-decorated) and
-    #    all decorated functions (including functions from all base classes).
-    # 2. All functions defined in UntrustedMixin.
-    # 3. All other non-decorated functions from classes other than UntrustedX
+    # NOTE: Method calling order (when called fom an UntrustedX object) --
+    # 1. Original cls (UntrustedX) methods (decorated and non-decorated) and
+    #    all decorated methods (including methods from all base classes).
+    # 2. All methods defined in UntrustedMixin.
+    # 3. All other non-decorated methods from classes other than UntrustedX
     #    and UntrustedMixin follow the original MRO.
     return cls
 
@@ -438,13 +453,16 @@ class UntrustedMixin(object):
     #  UntrustedStr to str using str() or __str__; we want a more explicit casting call.
     #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
     #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
-    #  to cast UntrustedStr. The same applies to __repr__ (and repr()).
-    # TODO: REMOVE __str__ and __repr__ ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
+    #  to cast UntrustedStr. The same applies to __repr__ (repr()) and __format__ (format()).
+    # TODO: REMOVE __str__, __repr__, and __format__ ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
     def __str__(self):
         return super().__str__()
 
     def __repr__(self):
         return super().__repr__()
+
+    def __format__(self, format_spec):
+        return super().__format__(format_spec)
 
     def to_trusted(self, forced=False):
         """Convert a value to its corresponding trusted type. Conversion results in
