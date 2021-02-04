@@ -33,7 +33,7 @@ class BaseIntSet(BaseStruct):
 
 
 if __name__ == "__main__":
-    from django.splice.structs import Struct
+    from django.splice.structs import Struct, trusted_struct
     from django.forms.fields import IntegerField
 
     class NumberIntSet(Struct):
@@ -96,8 +96,25 @@ if __name__ == "__main__":
     print("intSet (after synthesizing 35267): "
           "{set} ({bytes} bytes)".format(set=NumberIntSet.objects,
                                          bytes=len(NumberIntSet.objects.struct._contents)))
-    print("Getting all elements from intSet through get():")
+    print("Getting all elements from intSet:")
     for i, n in enumerate(NumberIntSet.objects):
         print("* int_set[{i}] = {value} (Synthesized: {synthesized}) ".format(i=i,
                                                                               value=n,
                                                                               synthesized=n.synthesized))
+
+    @trusted_struct
+    class TrustedNumberIntSet(Struct):
+        """An IntSet of trusted integers only."""
+        num = IntegerField()
+        struct = BaseIntSet()
+
+
+    for n in NumberIntSet.objects:
+        ts = TrustedNumberIntSet(num=n)
+        try:
+            ts.save()
+        except ValueError as e:
+            print("Cannot save {}, because {}".format(n, e))
+    print("Getting all elements from TrustedNumberIntSet:")
+    for i, n in enumerate(TrustedNumberIntSet.objects):
+        print("* int_set[{i}] = {value}".format(i=i, value=n))

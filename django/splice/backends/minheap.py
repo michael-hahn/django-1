@@ -30,7 +30,7 @@ class BaseMinHeap(BaseStruct):
 
 
 if __name__ == "__main__":
-    from django.splice.structs import Struct
+    from django.splice.structs import Struct, trusted_struct
     from django.forms.fields import CharField, IntegerField
 
     class NumberMinHeap(Struct):
@@ -72,3 +72,19 @@ if __name__ == "__main__":
     print("After synthesizing an intermediate value:")
     for n in NameMinHeap.objects:
         print("* {} (synthesized: {})".format(n, n.synthesized))
+
+    @trusted_struct
+    class TrustedNameMinHeap(Struct):
+        """A min heap of trusted names only."""
+        name = CharField()
+        struct = BaseMinHeap()
+
+    for n in NameMinHeap.objects:
+        tmh = TrustedNameMinHeap(name=n)
+        try:
+            tmh.save()
+        except ValueError as e:
+            print("Cannot save {}, because {}".format(n, e))
+    print("Enumerate all elements in TrustedNameMinHeap:")
+    for n in TrustedNameMinHeap.objects:
+        print("* {}".format(n))

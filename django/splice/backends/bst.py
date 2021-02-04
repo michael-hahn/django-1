@@ -49,7 +49,7 @@ class BaseBST(BaseStruct):
 
 
 if __name__ == "__main__":
-    from django.splice.structs import Struct
+    from django.splice.structs import Struct, trusted_struct
     from django.forms.fields import CharField, IntegerField
 
     class NameNumBST(Struct):
@@ -71,3 +71,19 @@ if __name__ == "__main__":
     print("Iterate through the key-value tree (after synthesis):")
     for k, v in NameNumBST.objects:
         print("* {} (synthesized: {}) -> {}".format(k, k.synthesized, v))
+
+    @trusted_struct
+    class TrustedNameNumBST(Struct):
+        name = CharField()
+        num = IntegerField()
+        struct = BaseBST()
+
+    for k, v in NameNumBST.objects:
+        tbst = TrustedNameNumBST(name=k, num=v, key="name")
+        try:
+            tbst.save()
+        except ValueError as e:
+            print("Cannot save ({}, {}), because {}".format(k, v, e))
+    print("Iterate through the trusted key-value tree:")
+    for k, v in TrustedNameNumBST.objects:
+        print("* {} -> {}".format(k, v))

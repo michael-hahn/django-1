@@ -37,7 +37,7 @@ class BaseSortedList(BaseStruct):
 
 
 if __name__ == "__main__":
-    from django.splice.structs import Struct
+    from django.splice.structs import Struct, trusted_struct
     from django.forms.fields import CharField, IntegerField
 
     class NameSortedList(Struct):
@@ -64,6 +64,21 @@ if __name__ == "__main__":
     except RuntimeError as e:
         print("nsl[2] is synthesized. One should not try to get its value.")
 
+    @trusted_struct
+    class TrustedNameSortedList(Struct):
+        """A sorted list of trusted names only."""
+        name = CharField()
+        struct = BaseSortedList()
+
+    for n in NameSortedList.objects:
+        tsl = TrustedNameSortedList(name=n)
+        try:
+            tsl.save()
+        except ValueError as e:
+            print("Cannot save {}, because {}".format(n, e))
+    print("Enumerate all elements in TrustedNameSortedList:")
+    for i, n in enumerate(TrustedNameSortedList.objects):
+        print("* tsl[{i}] = {value}".format(i=i, value=n))
 
     class NumberSortedList(Struct):
         """A sorted list of numbers (integers)."""
@@ -95,3 +110,19 @@ if __name__ == "__main__":
               "(synthesized: {synthesized})".format(i=i,
                                                     value=n,
                                                     synthesized=n.synthesized))
+
+    @trusted_struct
+    class TrustedNumberSortedList(Struct):
+        """A sorted list of trusted numbers only."""
+        num = IntegerField()
+        struct = BaseSortedList()
+
+    for n in NumberSortedList.objects:
+        tsl = TrustedNumberSortedList(num=n)
+        try:
+            tsl.save()
+        except ValueError as e:
+            print("Cannot save {}, because {}".format(n, e))
+    print("Enumerate all elements in TrustedNumberSortedList:")
+    for i, n in enumerate(TrustedNumberSortedList.objects):
+        print("* tsl[{i}] = {value}".format(i=i, value=n))
