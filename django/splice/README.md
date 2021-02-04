@@ -62,7 +62,7 @@ An `UntrustedDatetime` object will now behave exactly the same as a regular
 `datetime` object except that it has an additional `synthesized` attribute.
 All methods in `UntrustedDatetime` are now decorated versions of the ones in
 `datetime`, which output untrusted values
-(see [Untrusted Class Inheritance](#untrusted_class_inheritance)).
+(see [Untrusted Class Inheritance](#untrusted-class-inheritance)).
 If some methods should not output untrusted values,
 you can easily override them in `UntrustedDatetime`:
 ```angular2html
@@ -88,7 +88,7 @@ You would return an `UntrustedDatetime` object in `DatetimeSynthesizer`'s
 Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
 synthesis.py and untrustedtypes.py for reference.
 
-## [Untrusted Class Inheritance](#untrusted_class_inheritance)
+## [Untrusted Class Inheritance](#untrusted-class-inheritance)
 To make it easy to create a new untrusted class from an existing (trusted)
 class, the `UntrustedMixin` class does most of the heavy-lifting. Specially,
 once a new untrusted class inherits it, `UntrustedMixin` would call a magic
