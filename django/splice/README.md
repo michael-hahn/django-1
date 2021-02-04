@@ -193,7 +193,7 @@ a keyword). This way of creating a new data structure is similar to how a new
 `Model` is created in Django. `MyBST` stores untrusted data, both synthesized
 and non-synthesized. For example, to insert a key/value pair to `MyBST`, you can:
 ```angular2html
-bst = MyBST(name="age", age=21, key="name")
+bst = MyBST(name="Jane Doe", age=21, key="name")
 bst.save()
 ```
 `key` tells `MyBST` which field is considered the key of the key/value pair.
@@ -202,10 +202,17 @@ a Django `Model`. To access data stored in `MyBST`, you should always work on
 `MyBST.objects`, which is the handle to the underlying data structure. We define
 a uniform interface to manipulate the data through `objects`, so you can access
 different data structures the same way. The interface is defined in
-`django.splice.backends.base`.
-
+`django.splice.backends.base`. The developer should practice **defensive
+programming** when retrieving and manipulating data stored in a synthesizable
+data structure. For example, when using data obtained from `MyBST`, *always*
+check whether the data is synthesized:
+```angular2html
+data = MyBST.objects.get("Jane Doe")
+if not data.synthesized:  # Defensive programming
+    # Do something useful here.
+```
 To create a trusted version of a BST, you simply need to add a decorator
-`@trusted_struct`:
+`@trusted_struct` to the class definition:
 ```angular2html
 @trusted_struct
 class TrustedBST(Struct):
@@ -215,7 +222,7 @@ class TrustedBST(Struct):
 ```
 `TrustedBST` behaves just like `MyBST` except that it stores only non-synthesized
 data. The decorator decorates the `save()` method so that it checks whether data
-to be inserted is synthesized or not before actually inserting the data.
+to be inserted is synthesized or not before inserting only non-synthesized data.
 
 # Notes
 * The following built-in functions work as intended or need not be handled:
