@@ -461,6 +461,7 @@ class DateTimeField(BaseTemporalField):
             value = to_current_timezone(value)
         return value
 
+    @add_synthesis
     def to_python(self, value):
         """
         Validate that the input can be converted to a datetime. Return a
