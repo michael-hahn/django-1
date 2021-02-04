@@ -1,9 +1,77 @@
 """In-memory data structure interface."""
 from abc import ABCMeta
+from functools import wraps
 import copy
 
 from django.forms.forms import DeclarativeFieldsMetaclass
 from django.splice.backends.base import BaseStruct
+from django.splice.untrustedtypes import UntrustedMixin, is_synthesized
+
+
+def trusted_struct(cls):
+    """
+    Decorates a class to enforce a trusted data structure.
+    One can apply this decorator on any data structure so
+    that it accepts only trusted data. For example:
+
+    @trusted_struct
+    class TrustedBST(Struct):
+        key = forms.CharField()
+        value = forms.IntegerField()
+        struct = BaseBST()
+    """
+    def save_wrapper(save_func):
+        """Function decorator that checks the input argument of save() in all BaseStruct's subclasses."""
+        @wraps(save_func)
+        def wrapper(data):
+            """
+            Convert only non-synthesized, untrusted data to trusted data and call save().
+            save() interface allows insertion of a value, a key/value pair, a list of values,
+            or a list of key/value pairs into the data structure.
+            """
+            # TODO: insertion fails even if one of the given list of values or key/value pairs
+            #  contains synthesized value. We can instead insert non-synthesized values/pairs.
+            if not is_synthesized(data):
+                # TODO: consider converting to trusted values? This means Base data structures
+                #  should not construct Synthesizable data structures but regular ones!
+                pass
+                # if isinstance(data, tuple):
+                #     data_0, data_1 = data[0], data[1]
+                #     if isinstance(data[0], UntrustedMixin):
+                #         data_0 = data[0].to_trusted()
+                #     if isinstance(data[1], UntrustedMixin):
+                #         data_1 = data[1].to_trusted()
+                #     data = (data_0, data_1)
+                # elif isinstance(data, list):
+                #     for i, d in enumerate(data):
+                #         if isinstance(d, tuple):
+                #             data_0, data_1 = data[0], data[1]
+                #             if isinstance(data[0], UntrustedMixin):
+                #                 data_0 = data[0].to_trusted()
+                #             if isinstance(data[1], UntrustedMixin):
+                #                 data_1 = data[1].to_trusted()
+                #             data[i] = (data_0, data_1)
+                #         else:
+                #             if isinstance(d, UntrustedMixin):
+                #                 data[i] = d.to_trusted()
+                # else:
+                #     if isinstance(data, UntrustedMixin):
+                #         data = data.to_trusted()
+            else:
+                raise ValueError("{data} is (a) synthesized value(s) and therefore cannot "
+                                 "be inserted into a trusted data structure".format(data=data))
+            return save_func(data)
+        return wrapper
+    for key in cls.__dict__:
+        value = getattr(cls, key)
+        if isinstance(value, BaseStruct):
+            save = getattr(value, "save", None)
+            if save:
+                setattr(value, "save", save_wrapper(save))
+            else:
+                raise AttributeError("{cls} is a subclass of BaseStruct, but it does not have "
+                                     "a required save() method defined.".format(cls=cls.__name__))
+    return cls
 
 
 class DeclarativeStructMetaclass(DeclarativeFieldsMetaclass):
