@@ -175,6 +175,48 @@ synthesized data leakage, we decorate `render()` to create an additional
 data checkpoint. The decorator works the same way as the middleware and
 is only used for the shortcut.
 
+## Trusted Data Structures
+Trusted data structures are the trusted version of (untrusted) synthesizable
+data structures. They store only non-synthesized data. Typically, a developer
+defines a synthesizable data collection like this:
+```angular2html
+class MyBST(Struct):
+    name = forms.CharField()
+    age = forms.IntegerField()
+    struct = BaseBST()
+```
+In this example, the underlying data structure is a (synthesizable) binary
+search tree (`struct`) that stores key/value pairs in which a key (`name`) is a
+string and a value (`age`) is an integer. Note that the names of those fields
+are *not* keywords, so one can use any name one prefers (except `key`, which is
+a keyword). This way of creating a new data structure is similar to how a new
+`Model` is created in Django. `MyBST` stores untrusted data, both synthesized
+and non-synthesized. For example, to insert a key/value pair to `MyBST`, you can:
+```angular2html
+bst = MyBST(name="age", age=21, key="name")
+bst.save()
+```
+`key` tells `MyBST` which field is considered the key of the key/value pair.
+This way of inserting a new key/value pair is similar to how data is saved in
+a Django `Model`. To access data stored in `MyBST`, you should always work on
+`MyBST.objects`, which is the handle to the underlying data structure. We define
+a uniform interface to manipulate the data through `objects`, so you can access
+different data structures the same way. The interface is defined in
+`django.splice.backends.base`.
+
+To create a trusted version of a BST, you simply need to add a decorator
+`@trusted_struct`:
+```angular2html
+@trusted_struct
+class TrustedBST(Struct):
+    key = forms.CharField()
+    value = forms.IntegerField()
+    struct = BaseBST()
+```
+`TrustedBST` behaves just like `MyBST` except that it stores only non-synthesized
+data. The decorator decorates the `save()` method so that it checks whether data
+to be inserted is synthesized or not before actually inserting the data.
+
 # Notes
 * The following built-in functions work as intended or need not be handled:
     * `abs()`: untrusted input returns untrusted output
