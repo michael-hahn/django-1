@@ -216,8 +216,8 @@ To create a trusted version of a BST, you simply need to add a decorator
 ```angular2html
 @trusted_struct
 class TrustedBST(Struct):
-    key = forms.CharField()
-    value = forms.IntegerField()
+    name = forms.CharField()
+    age = forms.IntegerField()
     struct = BaseBST()
 ```
 `TrustedBST` behaves just like `MyBST` except that it stores only non-synthesized
