@@ -2,7 +2,7 @@
 
 from django.splice.structures.hashtable import SynthesizableHashTable, SynthesizableDict
 from django.splice.backends.base import BaseStruct
-from django.splice.untrustedtypes import to_untrusted
+from django.splice.untrustedtypes import UntrustedMixin, to_untrusted
 
 
 class BaseHashTable(BaseStruct):
@@ -23,18 +23,23 @@ class BaseHashTable(BaseStruct):
         else:
             raise ValueError("a (key, value) tuple is expected, but got {}".format(data))
 
-    #  Note that hash values are different for trusted and untrusted values even though
-    #  the values are the same. Therefore, we untrustify the input key here if key is not.
+    # TODO: hash is used to identify items, but since we modified __hash__ for
+    #  UntrustedStr, a str can have the same value as an UntrustedStr but they
+    #  will have different hash values. We use a hack here to change a str key
+    #  to an UntrustedStr key, but __hash__ is ultimate proper fix (BaseDict too)
     def get(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         return self.struct.__getitem__(key)
 
     def delete(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         return self.struct.__delitem__(key)
 
     def synthesize(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         return self.struct.synthesize(key)
 
     def __iter__(self):
@@ -60,15 +65,18 @@ class BaseDict(BaseStruct):
             raise ValueError("a (key, value) tuple is expected, but got {}".format(data))
 
     def get(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         return self.struct[key]
 
     def delete(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         del self.struct[key]
 
     def synthesize(self, key):
-        key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, UntrustedMixin):
+            key = to_untrusted(key, synthesized=False)
         return self.struct.synthesize(key)
 
     def __iter__(self):
@@ -76,7 +84,7 @@ class BaseDict(BaseStruct):
 
 
 if __name__ == "__main__":
-    from django.splice.structs import Struct
+    from django.splice.structs import Struct, trusted_struct
     from django.forms.fields import CharField, IntegerField
 
     class NameNumHashTable(Struct):
@@ -92,17 +100,42 @@ if __name__ == "__main__":
     ht.save()
     print("Enumerating a string-keyed hash table:")
     for key in NameNumHashTable.objects:
-        print("* {key} (hash: {hash}) -> {value}".format(key=key,
-                                                         hash=key.__hash__(),
-                                                         value=NameNumHashTable.objects.get(key)))
+        value = NameNumHashTable.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
     NameNumHashTable.objects.synthesize("Blair")
     print("After deleting 'Blair' by synthesis, enumerate again:")
     for key in NameNumHashTable.objects:
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=NameNumHashTable.
-                                                                                   objects.get(key),
-                                                                                   synthesis=key.synthesized))
+        value = NameNumHashTable.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
+
+    @trusted_struct
+    class TrustedNameNumHashTable(Struct):
+        name = CharField()
+        num = IntegerField()
+        struct = BaseHashTable()
+
+    for key in NameNumHashTable.objects:
+        value = NameNumHashTable.objects.get(key)
+        tht = TrustedNameNumHashTable(name=key, num=value, key="name")
+        try:
+            tht.save()
+        except ValueError as e:
+            print("Cannot save ({}, {}), because {}".format(key, value, e))
+    print("Enumerating a trusted string-keyed hash table:")
+    for key in TrustedNameNumHashTable.objects:
+        value = TrustedNameNumHashTable.objects.get(key)
+        print("* {key} (hash: {hash})"
+              " -> {value}".format(key=key, hash=key.__hash__(), value=value))
 
     class NumNameHashTable(Struct):
         name = CharField()
@@ -119,17 +152,23 @@ if __name__ == "__main__":
     ht.save()
     print("Enumerating an int-keyed hash table:")
     for key in NumNameHashTable.objects:
-        print("* {key} (hash: {hash}) -> {value}".format(key=key,
-                                                         hash=key.__hash__(),
-                                                         value=NumNameHashTable.objects.get(key)))
+        value = NumNameHashTable.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
     NumNameHashTable.objects.synthesize(32_345_435_432_758_439_203_535_345_435)
     print("After deleting '32345435432758439203535345435' by synthesis, enumerate again:")
     for key in NumNameHashTable.objects:
-        print("* {key} (hash: {hash}) -> {value} [Synthesized Key: {synthesis}]".format(key=key,
-                                                                                        hash=key.__hash__(),
-                                                                                        value=NumNameHashTable.
-                                                                                        objects.get(key),
-                                                                                        synthesis=key.synthesized))
+        value = NumNameHashTable.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
 
     class NameNumDict(Struct):
         name = CharField()
@@ -144,21 +183,49 @@ if __name__ == "__main__":
     ht.save()
     print("Enumerating a string-keyed hash table:")
     for key in NameNumDict.objects:
-        print("* {key} (hash: {hash}) -> {value}".format(key=key,
-                                                         hash=key.__hash__(),
-                                                         value=NameNumDict.objects.get(key)))
+        value = NameNumDict.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
     NameNumDict.objects.synthesize("Luke")
     print("After deleting 'Luke' by synthesis, enumerate again:")
     for key in NameNumDict.objects:
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=NameNumDict.objects.get(key),
-                                                                                   synthesis=key.synthesized))
-
+        value = NameNumDict.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
     NameNumDict.objects.delete("Andre")
     print("After deleting 'Andre' by calling delete(), enumerate again:")
     for key in NameNumDict.objects:
-        print("* {key}(hash: {hash}) -> {value} [Synthesized: {synthesis}]".format(key=key,
-                                                                                   hash=key.__hash__(),
-                                                                                   value=NameNumDict.objects.get(key),
-                                                                                   synthesis=key.synthesized))
+        value = NameNumDict.objects.get(key)
+        print("* {key} (hash: {hash}, Synthesized: {synthesis_key})"
+              " -> {value} [Synthesized: {synthesis_value}]".format(key=key,
+                                                                    hash=key.__hash__(),
+                                                                    synthesis_key=key.synthesized,
+                                                                    value=value,
+                                                                    synthesis_value=value.synthesized))
+
+    @trusted_struct
+    class TrustedNameNumDict(Struct):
+        name = CharField()
+        num = IntegerField()
+        struct = BaseHashTable()
+
+    for key in NameNumDict.objects:
+        value = NameNumDict.objects.get(key)
+        td = TrustedNameNumDict(name=key, num=value, key="name")
+        try:
+            td.save()
+        except ValueError as e:
+            print("Cannot save ({}, {}), because {}".format(key, value, e))
+    print("Enumerating a trusted string-keyed hash table:")
+    for key in TrustedNameNumDict.objects:
+        value = TrustedNameNumDict.objects.get(key)
+        print("* {key} (hash: {hash})"
+              " -> {value}".format(key=key, hash=key.__hash__(), value=value))
