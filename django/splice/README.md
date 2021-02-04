@@ -5,8 +5,11 @@ values (e.g., `int`, `str`, and `float`). All synthesizers subclass from the bas
 class `Synthesizer` and output corresponding *untrusted* data (of type e.g.,
 `UntrustedInt`, `UntrustedFloat`, and `UntrustedStr`). With these fundamental
 type classes, you can (in most cases) easily create a new synthesizer for a
-different type (class) of objects, leveraging existing synthesizers. For example,
-to create a synthesizer that synthesizes Python's `datetime` objects, you can:
+different type (class) of objects, leveraging existing synthesizers.
+
+## Illustrate by Example
+For example, to create a synthesizer that synthesizes Python's `datetime` objects,
+you can:
 1. Create a new synthesizer class `DatetimeSynthesizer` that inherits from
    `FloatSynthesizer`.
 2. Add a new function that converts a `datetime` object to a `float` object, e.g.,
@@ -41,7 +44,10 @@ like a `FloatSynthesizer`.
 Notice that `to_python()` and `simple_synthesis()` should return an untrusted
 `datetime` object, not Python's original `datetime` object. This can also be
 done by subclassing both `UntrustedMixin` and `datetime` to create a new class.
-The most basic construction looks similar to this:
+
+## Create a New Untrusted Class
+The most basic construction to create a new untrusted class looks like this
+(following the `datetime` example above):
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
     def __new__(cls, *args, synthesized=False, **kwargs):
@@ -55,8 +61,10 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 An `UntrustedDatetime` object will now behave exactly the same as a regular
 `datetime` object except that it has an additional `synthesized` attribute.
 All methods in `UntrustedDatetime` are now decorated versions of the ones in
-`datetime`, which output untrusted values. If some methods should not output
-untrusted values, you can easily override them in `UntrustedDatetime`:
+`datetime`, which output untrusted values
+(see [Untrusted Class Inheritance](#untrusted_class_inheritance)).
+If some methods should not output untrusted values,
+you can easily override them in `UntrustedDatetime`:
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
     def __new__(cls, *args, synthesized=False, **kwargs):
@@ -79,6 +87,45 @@ You would return an `UntrustedDatetime` object in `DatetimeSynthesizer`'s
 
 Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
 synthesis.py and untrustedtypes.py for reference.
+
+## [Untrusted Class Inheritance](#untrusted_class_inheritance)
+To make it easy to create a new untrusted class from an existing (trusted)
+class, the `UntrustedMixin` class does most of the heavy-lifting. Specially,
+once a new untrusted class inherits it, `UntrustedMixin` would call a magic
+`__init_subclass__` method to *decorate* the new untrusted class and all of
+its base classes based on its MRO (skipping `UntrustedMixin`). The class
+decorator in turn decorates all the methods defined in each class. The
+decoration process follows the order below:
+1. Methods in the new untrusted class are first decorated. Since the developer
+   has the full control of this class, it is technically *not* necessary to
+   decorate any methods (or method overrides). Instead, *this class is a good
+   place for the developer to prevent some inherited methods from being
+   automatically decorated by `UntrustedMixin`*. Therefore, if the developer
+   wants a method to be automatically decorated, the method name must be prefixed
+   by either `synthesis_` or `_synthesis_`. The developer can also not follow
+   this naming convention and simply implement the method that returns an
+   untrusted value (if needed). All methods that do not follow the naming
+   convention will not be decorated.
+2. All methods in `UntrustedMixin` will not be decorated. We have already handled
+   them correctly.
+3. All callable methods encountered in (1) and (2), if they appear again in the
+   base classes, will not be handled again. In base classes, the same principle
+   applies: if we have encountered a method in a base class, the same method in
+   a later base class (based on MRO) will *not* be handled again. This ensures that
+   decoration, to the best of our ability and in general, will not lead to
+   surprises in terms of MRO.
+
+Note that after a method is decorated, it is automatically "promoted" in MRO to
+the untrusted class, because we use the `setattr()` method to set the decorated
+method to be an attribute of the untrusted class. Therefore, after the entire
+decoration process is finished, the MRO will be:
+1. All methods in the untrusted class (both decorated and non-decorated) and
+    all decorated methods (including methods from all the base classes).
+2. All methods defined in `UntrustedMixin`.
+3. All other non-decorated functions from classes other than the untrusted class
+   and `UntrustedMixin`, following the original MRO.
+
+> Some magic methods have special functionality and should not be decorated.
 
 # Trusted Sinks
 Trusted data sinks are locations in the framework that allow only non-synthesized
@@ -220,7 +267,8 @@ is only used for the shortcut.
   z = y[x]            # z is a trusted int object
   ```
   In this example, ideally `z` should be an `UntrustedInt` object because it is
-  the result of an *untrusted slice* of a trusted list.
+  the result of an *untrusted slice* of a trusted list. *Note that this particular
+  issue can be addressed by overriding `__getitem__()` of `list`.*
 
 # To-Do's:
 * [ ] The `bool` type cannot be subclassed (unlike `int` or `float`, for example).
