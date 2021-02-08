@@ -236,6 +236,44 @@ class BinarySearchTree(object):
         else:
             return self._first_left_parent_value(parent)
 
+    def _find_predecessor(self, node):
+        """Return the in-order predecessor of the specified node."""
+        pred = None
+        # If the node has a left child, the predecessor is the maximum node in the
+        # subtree rooted at the left child
+        if node.left_child:
+            pred = self._max_value_child_node(node.left_child)
+        # Otherwise, if the node has no parent (it is the root), it has no predecessor
+        elif not node.parent:
+            pred = None
+        # Otherwise, keep following left-child pointers until we find a right child
+        # (which could be the current node itself); the predecessor is this left child's
+        # parent, or none if we have reached the root
+        else:
+            while node.parent and node.parent.left_child is node:
+                node = node.parent
+            pred = node.parent
+        return pred
+    
+    def _find_successor(self, node):
+        """Return the in-order successor of the specified node."""
+        succ = None
+        # If the node has a right child, the successor is the minimum node in the
+        # subtree rooted at the right child
+        if node.right_child:
+            succ = self._min_value_child_node(node.right_child)
+        # Otherwise, if the node has no parent (it is the root), it has no successor
+        elif not node.parent:
+            succ = None
+        # Otherwise, keep following right-child pointers until we find a left child
+        # (which could be the current node itself); the successor is this left child's
+        # parent, or none if we have reached the root
+        else:
+            while node.parent and node.parent.right_child is node:
+                node = node.parent
+            succ = node.parent
+        return succ
+
     def to_ordered_list(self, node, ordered_list):
         """Convert the tree into an in-ordered list of nodes. The list is stored in 'ordered_list'."""
         if node is None:
