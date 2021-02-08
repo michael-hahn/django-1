@@ -1,3 +1,120 @@
+# Untrusted Data Types
+Splice introduces **untrusted** data types, which instantiate objects that have
+a boolean `synthesized` attribute. The value of such an object should not be
+trusted, because it can be synthesized (randomly or through user-defined
+constraints) by the Splice framework. In general, Splice synthesizes the value
+of an object only when the object is explicitly deleted by the user (which we
+call "*deletion-by-synthesis*"). As such, all untrusted data types have their
+corresponding trusted types, which are simply regular Python classes. For example,
+Python's built-in type `int` has an untrusted counterpart called `UntrustedInt`
+and a user-defined class can have its own untrusted version. While an untrusted
+object behaves just like its trusted counterpart, untrusted types should not be
+considered to be equivalent to their trusted classes, specifically:
+1. The developer must practice **defensive programming** when handling untrusted
+   objects. At times, Splice also works with Python's type system to perform
+   type checks that ensure untrusted objects are properly handled (e.g., at
+   [trusted sinks](#trusted-sinks)). Additionally, implicit coercion (e.g.,
+   through magic methods such as `__int__` and `__str__`) or traditional
+   casting (e.g., through built-in functions such as `int()` and `str()`)
+   would lead to program faults. Instead, the developer must call the
+   `to_trusted()` method to make their intent explicit. This prevents
+   unintentional grant of trust to data objects.
+2. Operations between untrusted objects or untrusted and trusted objects propagate
+   "untrustedness". That is, the output of any operation involving one or more
+   untrusted objects is untrusted (however, as we shall discuss later, there exist
+   some exceptions, such as boolean objects).
+
+Splice designs and implements untrusted data types in the following ways.
+
+## [Inheritance through `UntrustedMixin`](#inheritance-through-untrustedmixin)
+Splice provides a single `UntrustedMixin` class that can be inherited, along with
+a regular Python class, to create the corresponding untrusted type. This approach
+should be preferred whenever the developer wants to create a new untrusted type
+from an existing Python class (see
+[Create a New Untrusted Class](#create-a-new-untrusted-class) for an example).
+Splice has instrumented most of the built-in Python data types using this
+approach. All untrusted data types have the prefix `Untrusted` in their class
+names (and use camel case following Python's naming convention).
+
+One important task performed by `UntrustedMixin` is decorating the output of
+the methods (including those inherited from the regular Python class) invoked
+by the untrusted data object to be untrusted, since *in most cases*, operations
+involving an untrusted object should return untrusted values.
+
+### Technical Details of `UntrustedMixin`
+To make it easy to create a new untrusted class from an existing (trusted)
+Python class, `UntrustedMixin` does most of the heavy-lifting. Specially,
+once a new untrusted class inherits it, `UntrustedMixin` would call a magic
+`__init_subclass__` method to *decorate* the new untrusted class and all of
+its base classes based on its MRO (skipping `UntrustedMixin` itself). The
+class decorator in turn decorates all the methods defined in each class. The
+decoration process follows the order below:
+1. Methods in the new untrusted class are first decorated. Since the developer
+   has the full control of this class, it is technically *not* necessary to
+   decorate any methods (or method overrides). Instead, *this class is a good
+   place for the developer to prevent some inherited methods from being
+   automatically decorated by `UntrustedMixin`*. Therefore, if the developer
+   wants a method to be automatically decorated, the method name must be prefixed
+   by either `synthesis_` or `_synthesis_`. The developer can also not follow
+   this naming convention and simply implement the method that returns an
+   untrusted value (if needed). All methods that do not follow the naming
+   convention will not be decorated.
+2. All methods in `UntrustedMixin` will not be decorated. They are handled
+   directly by our framework.
+3. All callable methods encountered in (1) and (2), if they appear again in the
+   base classes, will not be handled again. In base classes, the same principle
+   applies: if we have encountered a method in a base class, the same method in
+   a later base class (based on MRO) will *not* be handled again. This ensures that
+   decoration, to the best of our ability and in general, will not lead to
+   surprises in terms of MRO.
+
+Note that after a method is decorated, it is automatically "promoted" in MRO to
+the untrusted class, because we use the `setattr()` method to set the decorated
+method to be an attribute of the untrusted class. Therefore, after the entire
+decoration process is finished, the MRO will be:
+1. All methods in the untrusted class (both decorated and non-decorated) and
+    all decorated methods (including methods from all the base classes).
+2. All methods defined in `UntrustedMixin`.
+3. All other non-decorated functions from classes other than the untrusted class
+   and `UntrustedMixin`, following the original MRO.
+
+> Some magic methods have special functionality and should not return untrusted
+> values. Therefore, they are not decorated.
+
+> :exclamation: When the calling object is of a trusted class (e.g., a built-in
+> `int` object), and the operation involves an untrusted object, we can sometimes
+> rely on the *reflected* method to return untrusted objects. However, this is
+> only possible if operators are used and will not work if magic methods are
+> called directly. For example,
+> ```angular2html
+> x = 1
+> y = UntrustedInt(1)
+> z = x + y         # type(z) == UntrustedInt, due to UntrustedInt reflected method __radd__
+> z = x.__add__(y)  # type(z) == int
+> ```
+> Note that the operator (e.g., +) will call the second operand's reflected method
+> **first** if the second operand's class is a subclass of the first operand
+> and if the second operand's reflected method is defined! This does *not* work
+> if one uses the magic method directly!
+
+## Make Regular Classes Trust-Aware
+For an entire Python application to handle "untrustedness" properly, untrusted
+data types cannot be the only classes that propagate "untrustedness." For example,
+`bytearray` has an `extend` method. A `bytearry` object extended by an
+`UntrustedBytearray` object returns a `bytearray` object, because `bytearray`
+is not trust-aware (and the `extend` method cannot be reflected, so the control
+will not be transferred to `UntrustedBytearray` like in the `+` example above).
+For another example, even though we showed in
+[Create a New Untrusted Class](#create-a-new-untrusted-class) that we can easily
+create an `UntrustedDatetime` type, we cannot ensure that an `UntrustedDatetime`
+object is created when its input is untrusted. That is, for example, the following
+code will still return a `datatime` object, instead of an `UntrustedDatetime`
+object, even though `year`, `month`, and `day` are all untrusted:
+  ```angular2html
+  datetime(year=UntrustedInt(2020), month=UntrustedInt(2), day=UntrustedInt(10))
+  ```
+Again, this is because the `datatime` class itself is not trust-aware.
+
 # Customize a Synthesizer
 Splice has a number of built-in synthesizers (e.g., `IntSynthesizer`, `FloatSynthesizer`,
 `BitVecSynthesizer`, `StrSynthesizer`) that can synthesize different types of
@@ -45,7 +162,7 @@ Notice that `to_python()` and `simple_synthesis()` should return an untrusted
 `datetime` object, not Python's original `datetime` object. This can also be
 done by subclassing both `UntrustedMixin` and `datetime` to create a new class.
 
-## Create a New Untrusted Class
+## [Create a New Untrusted Class](#create-a-new-untrusted-class)
 The most basic construction to create a new untrusted class looks like this
 (following the `datetime` example above):
 ```angular2html
@@ -62,7 +179,7 @@ An `UntrustedDatetime` object will now behave exactly the same as a regular
 `datetime` object except that it has an additional `synthesized` attribute.
 All methods in `UntrustedDatetime` are now decorated versions of the ones in
 `datetime`, which output untrusted values
-(see [Untrusted Class Inheritance](#untrusted-class-inheritance)).
+(see [Inheritance through `UntrustedMixin`](#inheritance-through-untrustedmixin)).
 If some methods should not output untrusted values,
 you can easily override them in `UntrustedDatetime`:
 ```angular2html
@@ -86,50 +203,11 @@ You would return an `UntrustedDatetime` object in `DatetimeSynthesizer`'s
 `to_python()` and `simple_synthesis()` methods.
 
 Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
-synthesis.py and untrustedtypes.py for reference.
+`django.splice.synthesis` and `django.splice.untrustedtypes` for reference.
 
-## [Untrusted Class Inheritance](#untrusted-class-inheritance)
-To make it easy to create a new untrusted class from an existing (trusted)
-class, the `UntrustedMixin` class does most of the heavy-lifting. Specially,
-once a new untrusted class inherits it, `UntrustedMixin` would call a magic
-`__init_subclass__` method to *decorate* the new untrusted class and all of
-its base classes based on its MRO (skipping `UntrustedMixin`). The class
-decorator in turn decorates all the methods defined in each class. The
-decoration process follows the order below:
-1. Methods in the new untrusted class are first decorated. Since the developer
-   has the full control of this class, it is technically *not* necessary to
-   decorate any methods (or method overrides). Instead, *this class is a good
-   place for the developer to prevent some inherited methods from being
-   automatically decorated by `UntrustedMixin`*. Therefore, if the developer
-   wants a method to be automatically decorated, the method name must be prefixed
-   by either `synthesis_` or `_synthesis_`. The developer can also not follow
-   this naming convention and simply implement the method that returns an
-   untrusted value (if needed). All methods that do not follow the naming
-   convention will not be decorated.
-2. All methods in `UntrustedMixin` will not be decorated. We have already handled
-   them correctly.
-3. All callable methods encountered in (1) and (2), if they appear again in the
-   base classes, will not be handled again. In base classes, the same principle
-   applies: if we have encountered a method in a base class, the same method in
-   a later base class (based on MRO) will *not* be handled again. This ensures that
-   decoration, to the best of our ability and in general, will not lead to
-   surprises in terms of MRO.
-
-Note that after a method is decorated, it is automatically "promoted" in MRO to
-the untrusted class, because we use the `setattr()` method to set the decorated
-method to be an attribute of the untrusted class. Therefore, after the entire
-decoration process is finished, the MRO will be:
-1. All methods in the untrusted class (both decorated and non-decorated) and
-    all decorated methods (including methods from all the base classes).
-2. All methods defined in `UntrustedMixin`.
-3. All other non-decorated functions from classes other than the untrusted class
-   and `UntrustedMixin`, following the original MRO.
-
-> Some magic methods have special functionality and should not be decorated.
-
-# Trusted Sinks
+# [Trusted Sinks](#trusted-sinks)
 Trusted data sinks are locations in the framework that allow only non-synthesized
-data (although data *can* be untrusted).
+data.
 ## Views
 According to Django's official documentation:
 > A view function, or view for short, is a Python function that takes a
@@ -144,36 +222,61 @@ In general, regardless of the implementation of views (i.e., function-based
 or class-based), views typically return two types of responses:
 1. `HttpResponse`: Standard `HttpResponse` objects are static structures. The
    *content* of the response, which would be rendered to the user, is a
-   bytestring encoded from a string if necessary. The content must contain only
-   trusted data. Since Splice checks and stops illegal coercion from any
-   untrusted data, including synthesized data, to trusted data through `str()`
-   (as well as other built-in functions such as `int()` and `float()`,
-   and functions that uses `__str__` such as `print()` and `format()`),
-   the developer must *explicitly* perform untrusted-to-trusted data conversion
-   through `to_trusted()` call. Therefore, Splice effectively enforces that
-   the developer checks potentially untrusted data before sending data to the
-   sink; otherwise, `HttpResponse` cannot be rendered.
-2. `TemplateResponse`: From Django's official documentation (also see below),
-   `TemplateResponse` allows decorators or middleware to modify a response
-   after it has been constructed by the view. Splice middleware checks the
-   *context* of the response right before the response is rendered. Response
-   context is the abstraction where dynamic user data is stored and therefore
-   is where untrusted (and synthesized data) might leak into the trusted sink
-   that is the `TemplateResponse`. `TemplateResponse` and its equivalent are
+   byte string encoded from a string if necessary. The content must contain only
+   trusted data.
+2. `TemplateResponse`: `TemplateResponse` and its equivalent are
    what the developer typically uses to render their content dynamically.
+   From Django's official documentation:
+   > Unlike basic `HttpResponse` objects, `TemplateResponse` objects retain the
+   > details of the template and context that was provided by the view to compute
+   > the response. The final output of the response is not computed until it is
+   > needed, later in the response process.
 
-> Unlike basic `HttpResponse` objects, `TemplateResponse` objects retain the
-> details of the template and context that was provided by the view to compute
-> the response. The final output of the response is not computed until it is
-> needed, later in the response process.
+   `TemplateResponse` allows decorators or middleware to modify a response
+   after it has been constructed by the view. Response context is the
+   abstraction where dynamic user data is stored and therefore is where
+   untrusted (and synthesized data) might leak into the trusted sink
+   that is the `TemplateResponse`.
 
 Django also defines a shortcut function `render()` that works just like
 `TemplateResponse` but constructs response context and renders `HttpResponse`
 directly. This is originally designed to circumvent potentially costly
-middleware inspection and context modification. To prevent untrusted and
-synthesized data leakage, we decorate `render()` to create an additional
-data checkpoint. The decorator works the same way as the middleware and
-is only used for the shortcut.
+middleware inspection and context modification.
+
+Regardless of the type of responses the developer uses, Splice works with
+Python's type system to check and stop illegal coercion from any untrusted data,
+including synthesized data, to trusted data through `str()` (as well as other
+built-in functions such as `int()` and `float()`, functions that call
+`__str__` such as `print()` and `format()`, and magic methods that perform
+type coercion such as `__str__`, `__format__`, `__repr__`, and `__int__`).
+This means that:
+1. For `HttpResponse`, the byte string input *cannot* contain untrusted data,
+   since any call to construct the byte string that involves coercion to string
+   is checked.
+2. For both `TemplateResponse` and `render()`, right before context is rendered
+   but after all decorators and middleware has run, `render_value_in_context()`
+   function in `django.template.base` is called to convert any value in the
+   context to a string to become part of a rendered template. During this process,
+   any call to conversion is checked.
+
+Therefore, we ensure that no untrusted data can leak out of
+`Response` trusted sinks.
+
+### Defensive Programming in Views
+The developer must *explicitly* perform untrusted-to-trusted data conversion
+through the `to_trusted()` method for all untrusted data types. This involves,
+for example, checking if a piece of data is untrusted (since only untrusted
+types define `to_trusted()`) and calling `to_trusted()` if and only if the
+untrusted data is *not* synthesized.
+
+The developer must use this defensive programming strategy on all view functions
+and classes that they define.
+
+### Views as Trusted Sinks
+Unlike classic notion of trusted sinks (e.g., in a taint-tracking system where
+tainted data is not allowed to flow into taint sinks) that are typically enforced
+at (or right before) I/O (e.g., sockets), we enforce trusted data flow upstream
+in views. We will discuss this difference in more detail in our paper.
 
 ## Trusted Data Structures
 Trusted data structures are the trusted version of (untrusted) synthesizable
@@ -202,16 +305,9 @@ a Django `Model`. To access data stored in `MyBST`, you should always work on
 `MyBST.objects`, which is the handle to the underlying data structure. We define
 a uniform interface to manipulate the data through `objects`, so you can access
 different data structures the same way. The interface is defined in
-`django.splice.backends.base`. The developer should practice **defensive
-programming** when retrieving and manipulating data stored in a synthesizable
-data structure. For example, when using data obtained from `MyBST`, *always*
-check whether the data is synthesized:
-```angular2html
-data = MyBST.objects.get("Jane Doe")
-if not data.synthesized:  # Defensive programming
-    # Do something useful here.
-```
-To create a trusted version of a BST, you simply need to add a decorator
+`django.splice.backends.base`.
+
+To create a trusted version of a BST, the developer just need to add a decorator
 `@trusted_struct` to the class definition:
 ```angular2html
 @trusted_struct
@@ -224,7 +320,21 @@ class TrustedBST(Struct):
 data. The decorator decorates the `save()` method so that it checks whether data
 to be inserted is synthesized or not before inserting only non-synthesized data.
 
-# Notes
+### Defensive Programming in Data Structures
+The developer should practice *defensive programming* when retrieving and
+manipulating data stored in a synthesizable data structure. For example, when
+using data obtained from `MyBST` (the example above), *always* check whether
+the data is synthesized:
+```angular2html
+data = MyBST.objects.get("Jane Doe")
+if not data.synthesized:  # Defensive programming
+    # Do something useful here.
+```
+Similarly, the developer must ensure data to be inserted to a trusted data
+structure (e.g., `TrustedBST` in the example above) is not synthesized before
+calling `save()`.
+
+# [Notes](#notes)
 * The following built-in functions work as intended or need not be handled:
     * `abs()`: untrusted input returns untrusted output
       (e.g., `UntrustedFloat` -> `UntrustedFloat`).
@@ -233,6 +343,8 @@ to be inserted is synthesized or not before inserting only non-synthesized data.
       data can be synthesized, this built-in function should always return `False`
       for trusted and untrusted data anyways.
     * `delattr()`: delete the named attribute; no special handling is needed.
+    * `dict()`: we need only elements in the `dict` to be untrusted, so no special
+      handling is needed on the `dict` object itself.
     * `dir()`: return a list of valid attributes/names. Its corresponding magic
       method `__dir__` needs no special handling either.
     * `divmod()`: untrusted input returns untrusted output.
@@ -319,8 +431,7 @@ to be inserted is synthesized or not before inserting only non-synthesized data.
   the result of an *untrusted slice* of a trusted list. *Note that this particular
   issue can be addressed by overriding `__getitem__()` of `list`.*
 
-# To-Do's:
-* [ ] The `bool` type cannot be subclassed (unlike `int` or `float`, for example).
+* The `bool` type cannot be subclassed (unlike `int` or `float`, for example).
   This means that, for any function that returns a `bool`, we cannot coerce the
   return value to an *untrusted* type even if the input to the function is untrusted.
   Affected built-in functions include:
@@ -345,6 +456,7 @@ to be inserted is synthesized or not before inserting only non-synthesized data.
   frequently as a 0/1 index), but then the issue is not really about `bool`
   but about control-flow-based trust propagation.
 
+# To-Do's:
 * [x] Some built-in functions enforce their return type, even though they can be
   overridden by their respective magic method. We raise `TypeError` if input to
   those functions are *untrusted* to prevent unintended or illegal coercion to
@@ -376,7 +488,7 @@ to be inserted is synthesized or not before inserting only non-synthesized data.
     * `ascii()`: always return a string.
     * `bin()`: always return a binary string prefixed with `0b`.
     * `chr()`: always return a string.
-    * `hash()`: while `__hash__()` returns an UntrustedInt object, `hash()`
+    * `hash()`: while `__hash__()` returns an `UntrustedInt` object, `hash()`
       always returns an integer.
     * `hex()`: always return a string.
     * `oct()`: always return a string.
@@ -384,16 +496,44 @@ to be inserted is synthesized or not before inserting only non-synthesized data.
       a string.
 
 * [ ] Some built-in types are not (yet) handled by Splice.
-    * `bytearray`
-    * `bytes`
-    * `bool`: cannot be handled by subclassing (see above).
-    * `complex`
-    * `dict`
+    * [ ] `bytearray`: :construction: we are encountering issues with `bytearray`
+      (see comments in untrustedtypes.py).
+    * [ ] `bytes`
+    * [x] `bool`: cannot be handled by subclassing (see [Notes](#notes)).
+    * [ ] `complex`
 
 * [ ] Some built-in functions are not yet handled by Splice.
     * `compile()`
-    * `format()`
     * `range()`
 
 * [ ] Go through magic methods and identify ones that should not be
   decorated by `add_synthesis_to_func()` in `untrustedtypes.py`.
+
+* [x] Note in the paper that unlike classic notion of trusted sinks that are
+  typically enforced at I/O (sockets), we perform this enforcement upstream
+  in `Response`. This could be an interesting discussion point!
+
+* [x] If `HttpRespone` can be enforced by the type system (through `str()`
+  or `format()`) why can't we do the same with `TemplateResponse` (or `render()`)?
+
+* [x] Write down all the strategies that we use to modify Python's framework
+  to work with untrusted data types. This can be an interesting discussion
+  point in the paper to show how easy or difficult to adapt our system!
+
+* [x] Check if decorators change the methods in the base classes that caused
+  the `isinstance([], UserString) == True` problem.
+
+* [ ] What is the reasonable policy of untrusted data types in a program? For
+  example, how do we want to handle control flow when a condition is untrusted
+  (e.g., a Draconian policy might be that conditions used in a control flow
+  cannot contain untrusted values)? This could be an interesting discussion point
+  in the paper, especially that we can tie this with the `bool` issue that
+  we encountered, which is typically used for conditions.
+
+* [ ] Can we adapt an in-memory SQL database in Python to Django and our
+  framework? Look into a less contrived but still simple Django application and
+  see what schemas and queries it use and how easy it is that we can handle
+  them with synthesis? For example, perhaps we can convert Django form fields'
+  constraints (which are used for validation) into synthesis constraints that
+  can be used to synthesize new values? If so, this would be a perfect mechanism
+  to incorporate synthesis to databases without additional developer burden.
