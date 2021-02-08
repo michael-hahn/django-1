@@ -90,6 +90,8 @@ def to_untrusted(value, synthesized):
         return UntrustedDecimal(value, synthesized=synthesized)
     elif isinstance(value, str) or isinstance(value, UserString):
         return UntrustedStr(value, synthesized=synthesized)
+    elif isinstance(value, bytearray):
+        return UntrustedBytearray(value, synthesized=synthesized)
     #####################################################
     # TODO: Add more casting here for new untrusted types
     elif isinstance(value, datetime):
@@ -454,15 +456,17 @@ class UntrustedMixin(object):
     #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
     #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
     #  to cast UntrustedStr. The same applies to __repr__ (repr()) and __format__ (format()).
-    # TODO: REMOVE __str__, __repr__, and __format__ ONCE PRINT TO CONSOLE IS NO LONGER NEEDED
-    def __str__(self):
-        return super().__str__()
-
-    def __repr__(self):
-        return super().__repr__()
-
-    def __format__(self, format_spec):
-        return super().__format__(format_spec)
+    #
+    #  Note: comment out __str__, __repr__, and __format__ and let decoration and the type system
+    #        to handle illegal string coercion (from any type of untrusted values)
+    # def __str__(self):
+    #     return super().__str__()
+    #
+    # def __repr__(self):
+    #     return super().__repr__()
+    #
+    # def __format__(self, format_spec):
+    #     return super().__format__(format_spec)
 
     def to_trusted(self, forced=False):
         """Convert a value to its corresponding trusted type. Conversion results in
@@ -481,6 +485,8 @@ class UntrustedMixin(object):
             return super().__str__()
         elif isinstance(self, UntrustedDecimal):
             return Decimal(self)
+        elif isinstance(self, UntrustedBytearray):
+            return bytearray(self)
         #####################################################
         # TODO: Add more casting here for new untrusted types
         elif isinstance(self, UntrustedDatetime):
@@ -643,6 +649,15 @@ class UntrustedStr(UntrustedMixin, UserString):
         return type(self).custom_hash(chars)
 
 
+class UntrustedBytearray(UntrustedMixin, bytearray):
+    """
+    Subclass Python builtin bytearray class and Untrusted Mixin.
+    bytearray is mutable so we need not define __new__ ourselves.
+    """
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized, *args, **kwargs)
+
+
 class UntrustedDatetime(UntrustedMixin, datetime):
     """
     Subclass Python datetime module's datetime class and Untrusted Mixin.
@@ -725,6 +740,12 @@ def untrusted_int_test():
     assert type(synthesized_int_4) == type(synthesized_int_1), "synthesized_int_4 type is not UntrustedInt"
 
     untrusted_int_6 = base_int + untrusted_int_1
+    """
+    Note: If the right operand’s type is a subclass of the left operand’s type and that subclass provides a
+    different implementation of the reflected method for the operation, this method will be called before the
+    left operand’s non-reflected method. This behavior allows subclasses to override their ancestors’ operations.
+    Reference: https://docs.python.org/3/reference/datamodel.html#object.__radd__.
+    """
     assert untrusted_int_6 == 25, "untrusted_int_6 should be 25, but it is {}.".format(untrusted_int_6)
     assert untrusted_int_6.synthesized is False, "untrusted_int_6 should not be synthesized."
     assert type(untrusted_int_6) == type(untrusted_int_1), "untrusted_int_6 type is not UntrustedInt"
@@ -1110,8 +1131,22 @@ def untrusted_str_test():
               "TypeError: {error}".format(error=e))
 
 
+def untrusted_bytearray_test():
+    # TODO: Add more test cases.
+    trusted_bytearray = bytearray([110, 115, 120, 125, 130])
+    untrusted_bytearray = UntrustedBytearray(trusted_bytearray)
+    # Some expected test cases (bytearray is much less tested since it is not commonly used)
+    assert trusted_bytearray == untrusted_bytearray, "trusted_bytearray and untrusted_bytearray should be equal"
+    byte = untrusted_bytearray.pop(2)
+    assert byte == 120, "the third byte in the untrusted_bytearray should be 120, not {val}".format(val=byte)
+    assert type(byte) == UntrustedInt, "each byte in an untrusted bytearray should be an untrusted integer"
+    capital_byte_array = untrusted_bytearray.capitalize()
+    assert type(capital_byte_array) == UntrustedBytearray, "capital_byte_array should be untrusted"
+
+
 if __name__ == "__main__":
     untrusted_int_test()
     untrusted_float_test()
     untrusted_decimal_test()
     untrusted_str_test()
+    untrusted_bytearray_test()
