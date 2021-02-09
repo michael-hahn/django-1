@@ -1,119 +1,257 @@
 # Untrusted Data Types
-Splice introduces **untrusted** data types, which instantiate objects that have
-a boolean `synthesized` attribute. The value of such an object should not be
-trusted, because it can be synthesized (randomly or through user-defined
-constraints) by the Splice framework. In general, Splice synthesizes the value
-of an object only when the object is explicitly deleted by the user (which we
-call "*deletion-by-synthesis*"). As such, all untrusted data types have their
-corresponding trusted types, which are simply regular Python classes. For example,
-Python's built-in type `int` has an untrusted counterpart called `UntrustedInt`
-and a user-defined class can have its own untrusted version. While an untrusted
-object behaves just like its trusted counterpart, untrusted types should not be
-considered to be equivalent to their trusted classes, specifically:
-1. The developer must practice **defensive programming** when handling untrusted
-   objects. At times, Splice also works with Python's type system to perform
-   type checks that ensure untrusted objects are properly handled (e.g., at
-   [trusted sinks](#trusted-sinks)). Additionally, implicit coercion (e.g.,
-   through magic methods such as `__int__` and `__str__`) or traditional
-   casting (e.g., through built-in functions such as `int()` and `str()`)
-   would lead to program faults. Instead, the developer must call the
-   `to_trusted()` method to make their intent explicit. This prevents
-   unintentional grant of trust to data objects.
-2. Operations between untrusted objects or untrusted and trusted objects propagate
-   "untrustedness". That is, the output of any operation involving one or more
-   untrusted objects is untrusted (however, as we shall discuss later, there exist
-   some exceptions, such as boolean objects).
+Splice introduces **untrusted** data types and leverages the type system to
+propagate *untrustiness*. A piece of data is untrusted if 1) its value is provided
+by an untrusted source (e.g., a remote user from a network socket), or 2) its value
+might be reassigned by Splice (i.e., when Splice performs *deletion-by-synthesis*).
+Untrustiness propagates when untrusted data interacts with other untrusted or
+trusted data, in a fashion similar to classic taint propagation. For example, in
+an assignment-after-addition operation `z = x + y`, `z` becomes untrusted if and
+only if at least one operand (i.e., either `x` or `y`, or both) is untrusted.
 
-Splice designs and implements untrusted data types in the following ways.
+With the introduction of untrusted data types, Splice further leverages the type
+system to force programmers to use **defensive programming**. Defensive programming
+is essential for programs containing untrusted data, because any unchecked use
+of such data can cause harm to the program or even the underlying system (e.g.,
+SQL injection caused by malicious input from the network), or return bogus values.
 
-## [Inheritance through `UntrustedMixin`](#inheritance-through-untrustedmixin)
-Splice provides a single `UntrustedMixin` class that can be inherited, along with
-a regular Python class, to create the corresponding untrusted type. This approach
-should be preferred whenever the developer wants to create a new untrusted type
-from an existing Python class (see
-[Create a New Untrusted Class](#create-a-new-untrusted-class) for an example).
-Splice has instrumented most of the built-in Python data types using this
-approach. All untrusted data types have the prefix `Untrusted` in their class
-names (and use camel case following Python's naming convention).
+## [Python Background](#python-background)
+Everything (e.g., literals, classes, functions) in Python is an *object* and every
+object has a *type*, which is defined by a *class*. The *type* of an object
+determines the *methods* that are available to call on that object. Those methods
+are defined in the class, and because Python supports multi-inheritance, which
+allows a class to subclass from multiple base classes, methods defined in the
+base classes can be inherited (or overridden) by the subclass. Every class also
+has a set of predefined *special methods*, as specified by Python's **data model**,
+that enrich customized classes with language features to emulate operations of
+built-in types (i.e., Python's approach to *operator overloading*). These special
+methods' names are all prefixed and affixed by two underscores and therefore
+often referred to as "dunder" (double-underscore) methods. For example, to allow
+a customized class to emulate the addition operation (`+`) of numeric types
+(e.g., `int`), Python has a special method `__add__`. If the customized class
+defines `__add__`, Python invokes this method when the class' objects are being
+summed together.
 
-One important task performed by `UntrustedMixin` is decorating the output of
-the methods (including those inherited from the regular Python class) invoked
-by the untrusted data object to be untrusted, since *in most cases*, operations
-involving an untrusted object should return untrusted values.
+Special methods involving *binary arithmetic operations* (e.g., `+`, `-`, and ``<<``)
+also have their corresponding *reflected* special method with an additional "r"
+prefixed in its method name (e.g., `__radd__` is `__add__`'s reflected counterpart).
+The reflected method is called 1) if the operands are of different types and the
+left operand does not define the non-reflected method, or 2) if the right operand’s
+type is a *subclass* of the left operand’s type and that subclass has a different
+implementation of the reflected method (instead of inheriting the reflected method
+from the base class). For example, when evaluating the expression `x + y`, if `x`
+and `y` are of two different types, `y.__radd__(x)` is called if `x.__add__(y)`
+is not implemented. On the other hand, if `y`'s type is a subclass of `x`'s type,
+then `x.__add__(y)` is called if `y.__radd__(x)` is not implemented. This latter
+case allows a subclass to override its ancestors’ operations (without forcing
+the object of the subclass to always be the left operand).
 
-### Technical Details of `UntrustedMixin`
-To make it easy to create a new untrusted class from an existing (trusted)
-Python class, `UntrustedMixin` does most of the heavy-lifting. Specially,
-once a new untrusted class inherits it, `UntrustedMixin` would call a magic
-`__init_subclass__` method to *decorate* the new untrusted class and all of
-its base classes based on its MRO (skipping `UntrustedMixin` itself). The
-class decorator in turn decorates all the methods defined in each class. The
-decoration process follows the order below:
-1. Methods in the new untrusted class are first decorated. Since the developer
-   has the full control of this class, it is technically *not* necessary to
-   decorate any methods (or method overrides). Instead, *this class is a good
-   place for the developer to prevent some inherited methods from being
-   automatically decorated by `UntrustedMixin`*. Therefore, if the developer
-   wants a method to be automatically decorated, the method name must be prefixed
-   by either `synthesis_` or `_synthesis_`. The developer can also not follow
-   this naming convention and simply implement the method that returns an
-   untrusted value (if needed). All methods that do not follow the naming
-   convention will not be decorated.
-2. All methods in `UntrustedMixin` will not be decorated. They are handled
-   directly by our framework.
-3. All callable methods encountered in (1) and (2), if they appear again in the
-   base classes, will not be handled again. In base classes, the same principle
-   applies: if we have encountered a method in a base class, the same method in
-   a later base class (based on MRO) will *not* be handled again. This ensures that
-   decoration, to the best of our ability and in general, will not lead to
-   surprises in terms of MRO.
+As mentioned above, special methods are Python's approach to operator overloading,
+which in fact includes *built-in functions* such as `int()`, `float()`, and `str()`
+that construct objects of their respective *built-in types*. For example, if the
+class of an object `x` defines `__int__`, `int(x)` invokes `x.__int__()`. However,
+Python restricts the return type of those built-in functions, even though they can
+be customized by special methods (and no restriction is placed on those special
+methods). For example, while a class can customize `__int__`, it *must* return
+an object of type `int` for `int()` to run correctly; any non-`int` return value
+(including that of an `int` subclass) leads to a type error (or forced coercion
+to `int` with a warning).
 
-Note that after a method is decorated, it is automatically "promoted" in MRO to
-the untrusted class, because we use the `setattr()` method to set the decorated
-method to be an attribute of the untrusted class. Therefore, after the entire
-decoration process is finished, the MRO will be:
-1. All methods in the untrusted class (both decorated and non-decorated) and
-    all decorated methods (including methods from all the base classes).
-2. All methods defined in `UntrustedMixin`.
-3. All other non-decorated functions from classes other than the untrusted class
-   and `UntrustedMixin`, following the original MRO.
+> The following built-in functions have strict return types. Their respective
+> special method can override them but must return the right type:
+> 1. `int()` (special method `__int__`) must return an object of type `int`. The
+>    ability to return an instance of a strict subclass of `int` is deprecated and
+>    will be coerced to `int` with a deprecation warning.
+> 2. `float()` (special method `__float__`) must return an object of type `float`.
+>    The ability to return an instance of a strict subclass of `float` is
+>    deprecated and will be coerced to `float` with a deprecated warning.
+> 3. `str()` (special method `__str__` or possibly `__repr__`) must return an
+>    object of type `str` *or its subclass*.
+> 4. `repr()` (special method `__repr__`) must return an object of type `str`
+>    *or its subclass*.
+> 5. `format()` (special method `__format__`) must return an object of type `str`
+>    *or its subclass*.
 
-> Some magic methods have special functionality and should not return untrusted
-> values. Therefore, they are not decorated.
+## Splice in Python
+Splice's untrusted data types are constructed from regular Python classes (
+e.g., built-in types) but with an additional boolean *attribute* `synthesized`.
+For example, Python's built-in type `int` has an untrusted counterpart called
+`UntrustedInt`. A customized class can also have its own untrusted type.
+While an object of an untrusted type behaves just like its trusted counterpart
+(i.e., has the same of methods defined), untrusted data types should not be
+considered equivalent to their corresponding trusted classes due to the semantic
+difference of untrustiness, since objects (data) of regular Python classes are
+implicitly considered to be trusted. As such, to make this difference explicit
+and to assist defensive programming, Splice forbids type coercion through
+built-in functions such as `int()` and `str()` by overriding their corresponding
+special methods. Instead, if granting trust to an object of an untrusted type is
+warranted, the programmer must call `to_trusted()` to make such an intent explicit.
 
-> :exclamation: When the calling object is of a trusted class (e.g., a built-in
-> `int` object), and the operation involves an untrusted object, we can sometimes
-> rely on the *reflected* method to return untrusted objects. However, this is
-> only possible if operators are used and will not work if magic methods are
-> called directly. For example,
-> ```angular2html
-> x = 1
-> y = UntrustedInt(1)
-> z = x + y         # type(z) == UntrustedInt, due to UntrustedInt reflected method __radd__
-> z = x.__add__(y)  # type(z) == int
-> ```
-> Note that the operator (e.g., +) will call the second operand's reflected method
-> **first** if the second operand's class is a subclass of the first operand
-> and if the second operand's reflected method is defined! This does *not* work
-> if one uses the magic method directly!
+A Python program running on top of Splice runs just like a regular Python program
+without Splice, except that:
+1. Operations between objects of untrusted and trusted types propagate untrustiness.
+   That is, the output of most operations involving one or more objects of
+   untrusted types is of an untrusted type. This is to a large extent transparently
+   handled by Splice, but may require additional assistance from the programmer
+   in some instances.
+   > Not all operations propagate or should propagate untrustiness, see
+   > [Technical Details](#technical-details).
+2. As mentioned, the programmer should practice **defensive programming**,
+   especially when objects of untrusted types are involved. At times, Splice also
+   leverages Python's type system to enforce proper handling of those objects, for
+   example, at [trusted sinks](#trusted-sinks) where only objects of trusted types
+   (i.e., non-untrusted, regular Python types) are allowed.
 
-## Make Regular Classes Trust-Aware
-For an entire Python application to handle "untrustedness" properly, untrusted
-data types cannot be the only classes that propagate "untrustedness." For example,
-`bytearray` has an `extend` method. A `bytearry` object extended by an
+### [Technical Details](#technical-details)
+Splice leverages class inheritance to provide convenience to define new untrusted
+types from existing Python classes. The framework itself also provides untrusted
+built-in types (e.g., `int` and `str`). To ensure untrustiness propagates, Splice
+also provides tools to make existing Python classes *trust-aware*.
+
+#### Build Untrusted Data Types Through Inheritance
+Splice provides an `UntrustedMixin` class that contains most logic needed for new
+untrusted types. To create an untrusted type, the programmer should inherit both
+`UntrustedMixin` and the corresponding regular Python class. All untrusted data
+types conventionally have the prefix `Untrusted` in their class names (and use
+camel case following also Python's naming convention). See
+[Create a New Untrusted Class](#create-a-new-untrusted-class) for a concrete
+example.
+
+One important task of `UntrustedMixin` is decorating the output of methods
+(including those inherited from the regular Python class) invoked by an object
+of an untrusted type to be untrusted, since most operations involving such an
+object should return untrusted values. Specially, once a new untrusted class
+inherits `UntrustedMixin`, it would call `__init_subclass__` (a Python special
+method) to decorate methods defined in the new untrusted class and all of
+its base classes following its MRO (skipping `UntrustedMixin` itself). MRO, or
+method resolution order, is the way Python resolves a method in an object's
+class's inheritance chain. All decorated methods become the attributes of the new
+untrusted class and therefore are no longer resolved from the base classes in
+which they were defined. The decoration process follows the following order:
+1. Callable methods defined in the new untrusted class are first considered.
+   Since the programmer has the full control of this class, it is technically *not*
+   necessary for Splice to decorate any methods (or overridden methods). Instead,
+   *this class is where the programmer could prevent some inherited methods from
+   being automatically decorated by `UntrustedMixin` through overriding*. In case
+   that the programmer wants a method to be automatically decorated, Splice
+   stipulates that the method name must be prefixed by either `untrusted_` or
+   `_untrusted_`. However, the programmer can always implement the method to
+   directly return an untrusted value (if needed) and not follow this naming
+   convention.
+2. All methods in `UntrustedMixin` will not be decorated since they are handled
+   directly by Splice already.
+3. Callable methods in the base classes are then considered. To ensure that
+   decorated methods are the ones that would have been resolved in the MRO,
+   decoration follows MRO and methods that have been decorated will not be
+   considered again if they appear again later in the MRO (this rule applies to
+   also methods that Splice have already encountered in (1) and (2)).
+
+Therefore, after the decoration process is finished, the new MRO will be:
+1. All defined methods in the untrusted class (both decorated and non-decorated)
+   and all decorated methods from all the base classes
+2. All methods defined in `UntrustedMixin`
+3. All other non-decorated methods from classes other than the untrusted class
+   and `UntrustedMixin`, resolved by the original MRO.
+
+> Some methods and special methods provide functionality that should not
+> propagate untrustiness. That is, they should not return untrusted values
+> and therefore are not decorated.
+> <details>
+> <summary>List of Non-decorated Methods</summary>
+> Special methods that create, initialize, or destroy class instances:
+>
+> 1. `__new__`
+> 2. `__init__`
+> 3. `__del__`
+>
+> Special methods that control attribute access for class instance:
+> 1. `__getattr__`
+> 2. `__getattribute__`
+> 3. `__setattr__`
+> 4. `__delattr__`
+> 5. `__dir__`
+> 6. `__get__`
+> 7. `__set__`
+> 8. `__delete__`
+> 9. `__set_name__`
+> 10. `__slots__`
+>
+> Special methods that control class creation:
+> 1. `__init_subclass_`
+> 2. `__prepare__`
+> 3. `__class__`
+>
+> Special methods that control instance and subclass checks:
+> 1. `__instancecheck__`
+> 2. `__subclasscheck__`
+> 3. `__subclasshook__`
+>
+> Special methods that used to emulate container types:
+> 1. `__iter__`
+> 2. `__reversed__`
+>
+> Special methods that control "With" statement context managers:
+> 1. `__enter__`
+> 2. `__exit__`
+> </details>
+
+<details>
+<summary>Special Methods Related to Type Coercion</summary>
+As discussed above, Splice forbids type coercion through built-in functions
+such as <code>int()</code> and <code>str()</code>. This is accomplished in
+<code>UntrustedMixin</code> by overriding special methods such as
+<code>__int__</code>. When an object of an untrusted type calls <code>int()</code>
+or <code>__int__</code>, Splice returns a type error. Without this overriding,
+for example, Python would automatically coerce an <code>UntrustedInt</code> object
+to <code>int</code>. This is also the case for <code>float</code>. However,
+we need not override <code>__str__</code> (as well as <code>__repr__</code>,
+and <code>__format__</code>): they are automatically decorated to return
+<code>UntrustedStr</code> if their input is an untrusted value, after which
+Python will return a type error. This is possible without Splice explict raising
+the error because <code>UntrustedStr</code> is not a subclass of <code>str</code>,
+but of <code>UserString</code>.
+</details>
+
+<details>
+<summary>Leverage Reflected Methods for Binary Arithmetic Operations</summary>
+When an object of a trusted class invokes a binary arithmetic method (e.g.,
+<code>+</code>) and the right operand is an object of an untrusted class, we
+can rely on the untrusted class's reflected method to ensure untrustiness is
+properly propagated to the output value. However, this is only possible if
+operators are used and will not work if special methods are called directly.
+For example,
+
+```python
+from django.splice.untrustedtypes import UntrustedInt
+
+x = int(1)
+y = UntrustedInt(1)
+untrusted_z = x + y       # type(z) == UntrustedInt, due to UntrustedInt's reflected method __radd__
+trusted_z = x.__add__(y)  # type(z) == int
+```
+To make <code>trusted_z</code> untrusted, we must make sure regular Python classes
+are trust-aware.
+</details>
+
+#### Make Regular Classes Trust-Aware
+Untrustiness cannot be propagated properly if untrusted data types are the only
+classes that propagate untrustiness. For example, Python's built-in `bytearray`
+type has an `extend` method but a `bytearry` object extended by an
 `UntrustedBytearray` object returns a `bytearray` object, because `bytearray`
-is not trust-aware (and the `extend` method cannot be reflected, so the control
-will not be transferred to `UntrustedBytearray` like in the `+` example above).
-For another example, even though we showed in
-[Create a New Untrusted Class](#create-a-new-untrusted-class) that we can easily
-create an `UntrustedDatetime` type, we cannot ensure that an `UntrustedDatetime`
-object is created when its input is untrusted. That is, for example, the following
-code will still return a `datatime` object, instead of an `UntrustedDatetime`
-object, even though `year`, `month`, and `day` are all untrusted:
-  ```angular2html
-  datetime(year=UntrustedInt(2020), month=UntrustedInt(2), day=UntrustedInt(10))
-  ```
-Again, this is because the `datatime` class itself is not trust-aware.
+is not trust-aware (and `extend` is not a binary arithmetic operation that can
+be reflected). For another example, even though we can easily
+create an `UntrustedDatetime` type
+(see [Create a New Untrusted Class](#create-a-new-untrusted-class)),
+a `datetime` object is created even when its construction contains objects of
+an untrusted type. That is, for example, the following code returns a `datatime`
+object, instead of an `UntrustedDatetime` object, even though `year`, `month`,
+and `day` are all of `UntrustedInt`:
+```python
+import datetime
+from django.splice.untrustedtypes import UntrustedInt
+
+datetime(year=UntrustedInt(2020), month=UntrustedInt(2), day=UntrustedInt(10))
+ ```
+This is because regular Python classes are not trust-aware.
 
 # Customize a Synthesizer
 Splice has a number of built-in synthesizers (e.g., `IntSynthesizer`, `FloatSynthesizer`,
@@ -178,10 +316,8 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 An `UntrustedDatetime` object will now behave exactly the same as a regular
 `datetime` object except that it has an additional `synthesized` attribute.
 All methods in `UntrustedDatetime` are now decorated versions of the ones in
-`datetime`, which output untrusted values
-(see [Inheritance through `UntrustedMixin`](#inheritance-through-untrustedmixin)).
-If some methods should not output untrusted values,
-you can easily override them in `UntrustedDatetime`:
+`datetime`, which output untrusted values. If some methods should not output
+untrusted values, you can easily override them in `UntrustedDatetime`:
 ```angular2html
 class UntrustedDatetime(UntrustedMixin, datetime):
     def __new__(cls, *args, synthesized=False, **kwargs):
@@ -457,28 +593,10 @@ calling `save()`.
   but about control-flow-based trust propagation.
 
 # To-Do's:
-* [x] Some built-in functions enforce their return type, even though they can be
-  overridden by their respective magic method. We raise `TypeError` if input to
-  those functions are *untrusted* to prevent unintended or illegal coercion to
-  trusted data. Note that there is *no* type coercion if one calls the magic
-  method equivalents directly (with exceptions), but since we do not want to
-  override built-in functions directly (which may causes unintended side effects),
-  we cannot enforce `TypeError` without changing magic methods.
-    * `str()` (`__str__`):  must return a string; otherwise `TypeError`. `TypeError`
-      is directly raised from the language runtime, so we do not need to raise
-      `TypeError` in `__str__`. `__str__` must also return a string. `print()`
-      calls `__str__`, and therefore is similarly handled.
-    * `repr()` (`__repr__`): same as `str()` (`__str__`).
-    * `int()` (`__int__`): coerce to `int` if returns a subclass of `int`.
-      `__int__` does not enforce coercion, but we must raise `TypeError` in
-      `__int__` to override `int()`.
-    * `float()` (`__float__`): coerce to `float` if returns a subclass of `float`.
-      `__float__` does not enforce coercion, but we must raise `TypeError` in
-      `__float__` to override `float()`.
-    * `complex()` (`__complex__`): we cannot yet handle `complex` built-in type.
-      However, `complex()` can delegate to `__complex__` (if defined), and then
-      `__float__` (if defined), and finally `__index__`. Therefore, if the
-      untrusted input is delegated to ``__float__``, `TypeError` will be raised.
+* [x] `complex()` (`__complex__`): we cannot yet handle `complex` built-in type.
+  However, `complex()` can delegate to `__complex__` (if defined), and then
+  `__float__` (if defined), and finally `__index__`. Therefore, if the
+  untrusted input is delegated to ``__float__``, `TypeError` will be raised.
 
 * [ ] Some built-in functions have no corresponding magic methods, or they may
   call some magic methods as helper functions (e.g., `bin()` calls `__index__`,
@@ -515,10 +633,6 @@ calling `save()`.
 
 * [x] If `HttpRespone` can be enforced by the type system (through `str()`
   or `format()`) why can't we do the same with `TemplateResponse` (or `render()`)?
-
-* [x] Write down all the strategies that we use to modify Python's framework
-  to work with untrusted data types. This can be an interesting discussion
-  point in the paper to show how easy or difficult to adapt our system!
 
 * [x] Check if decorators change the methods in the base classes that caused
   the `isinstance([], UserString) == True` problem.
