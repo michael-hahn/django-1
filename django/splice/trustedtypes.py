@@ -68,13 +68,13 @@ class TrustAwareDatetime(TrustAwareMixin, datetime):
         minute = value.minute
         second = value.second
         microsecond = value.microsecond
-        return datetime(year=year,
-                        month=month,
-                        day=day,
-                        hour=hour,
-                        minute=minute,
-                        second=second,
-                        microsecond=microsecond)
+        return TrustAwareDatetime(year=year,
+                                  month=month,
+                                  day=day,
+                                  hour=hour,
+                                  minute=minute,
+                                  second=second,
+                                  microsecond=microsecond)
 
 
 if __name__ == "__main__":
