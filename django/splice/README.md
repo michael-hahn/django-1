@@ -549,7 +549,7 @@ The common template to create a new untrusted class (and in this example,
 the `UntrustedDatetime` class) looks like this:
 ```python
 import datetime
-from django.splice.untrustedtypes import UntrustedMixin
+from django.splice.utils import UntrustedMixin
 
 class UntrustedDatetime(UntrustedMixin, datetime):
     def __new__(cls, *args, synthesized=False, **kwargs):
@@ -559,34 +559,79 @@ class UntrustedDatetime(UntrustedMixin, datetime):
 
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        year = value.year
+        month = value.month
+        day = value.day
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        return UntrustedDatetime(year=year,
+                                 month=month,
+                                 day=day,
+                                 hour=hour,
+                                 minute=minute,
+                                 second=second,
+                                 microsecond=microsecond,
+                                 synthesized=flag)
 ```
-An `UntrustedDatetime` object will behave exactly like a regular `datetime` object
+An `UntrustedDatetime` object will behave exactly like a native `datetime` object
 except that it is untrusted. All methods in `UntrustedDatetime` are inherited from
-`datetime` and decorated by `UntrustedMixin`. If some methods should not output
-untrusted values, the programmer should override them in `UntrustedDatetime`:
+`datetime` and decorated by `UntrustedMixin`. However, the programmer must
+implement an `untrustify()` class method that takes a trust-aware or native
+object (i.e., the `value` parameter) and a "synthesized" flag, and returns the
+corresponding untrusted object. If some methods should not output untrusted values,
+the programmer can override them in `UntrustedDatetime`:
 ```python
 import datetime
-from django.splice.untrustedtypes import UntrustedMixin
+from django.splice.utils import UntrustedMixin
 
 class UntrustedDatetime(UntrustedMixin, datetime):
-    def __new__(cls, *args, synthesized=False, **kwargs):
-        self = super().__new__(cls, *args, **kwargs)
-        return self
-
-    def __init__(self, *args, synthesized=False, **kwargs):
-        super().__init__(synthesized)
-
     def timetuple(self):
-        # We simply call datetime's timetuple() to override the
+        # We simply call datetime timetuple() to override the
         # method so that timetuple() output will not be decorated
         return super().timetuple()
 ```
-As mentioned before, the programmer should return an `UntrustedDatetime` object
+As mentioned, the programmer should return an `UntrustedDatetime` object
 in `DatetimeSynthesizer`'s `to_python()` and `simple_synthesis()` methods.
 
-Note that `DatetimeSynthesizer` and `UntrustedDatetime` are implemented in
-`django.splice.synthesis` and `django.splice.untrustedtypes`, respectively,
-for reference.
+To propagate untrustiness properly, a `TrustAwareDateTime` class should also be
+defined:
+```python
+import datetime
+from django.splice.utils import TrustAwareMixin
+
+class TrustAwareDatetime(TrustAwareMixin, datetime):
+    @classmethod
+    def trustify(cls, value):
+        year = value.year
+        month = value.month
+        day = value.day
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        return TrustAwareDatetime(year=year,
+                                  month=month,
+                                  day=day,
+                                  hour=hour,
+                                  minute=minute,
+                                  second=second,
+                                  microsecond=microsecond)
+```
+Similarly, a `TrustAwareDatetime` object will behave exactly like a native
+`datetime` object except that it is trust-aware. All methods in `TrustAwareDatetime`
+are inherited from `datetime` and decorated by `TrustAwareMixin`. However, the
+programmer must implement a `trustify()` class method that takes an untrusted
+object (i.e., the `value` parameter) and returns the corresponding trust-aware
+object.
+
+Note that `DatetimeSynthesizer`, `UntrustedDatetime`, and `TrustAwareDatetime`
+are implemented in `django.splice.synthesis`, `django.splice.untrustedtypes`,
+and `django.splice.trustedtypes`, respectively, for reference.
 
 # [Trusted Sinks](#trusted-sinks)
 Trusted data sinks are locations that allow only non-synthesized data.
