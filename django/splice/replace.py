@@ -82,6 +82,7 @@ def _replace_local_var(source, rel, new):
     source.f_locals[rel] = new
     api.PyFrame_LocalsToFast(ctypes.py_object(source), ctypes.c_int(0))
 
+
 _RELATIONS = {
     Path.R_ATTRIBUTE: _replace_attribute,
     Path.R_INDEXVAL: _replace_indexval,

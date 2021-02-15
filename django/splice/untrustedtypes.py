@@ -137,6 +137,23 @@ class UntrustedStr(UntrustedMixin, str):
         return UntrustedStr(other.__add__(self), synthesized=synthesized)
 
 
+class UntrustedBytes(UntrustedMixin, bytes):
+    """
+    Subclass Python builtin bytes class and UntrustedMixin.
+    """
+
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedBytes(value, synthesized=flag)
+
+
 class UntrustedBytearray(UntrustedMixin, bytearray):
     """
     Subclass Python builtin bytearray class and UntrustedMixin.
@@ -201,7 +218,6 @@ class UntrustedDatetime(UntrustedMixin, datetime):
                                  second=second,
                                  microsecond=microsecond,
                                  synthesized=flag)
-
 
 
 def int_test():
@@ -301,8 +317,21 @@ def int_test():
     assert i == 66308
     assert type(i) == int
 
-    # TODO: to_bytes() does not propagate untrustiness properly
-    #  because the built-in 'bytes' class has no untrusted type yet
+    # to_bytes()
+    b = untrusted_int_1.to_bytes(10, 'big')
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is False
+
+    b = synthesized_int_1.to_bytes(10, 'big')
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is True
+
+    b = base_int.to_bytes(10, 'big')
+    assert type(b) == bytes
+
+    # FIXME: int_literal returns builtins int
+    b = int_literal.to_bytes(10, 'big')
+    assert type(b) == builtins.bytes
 
     # abs() (__abs__)
     i = abs(-untrusted_int_1)
@@ -1481,8 +1510,21 @@ def str_test():
     assert c == 1
     assert type(s) == builtins.str
 
-    # TODO: encode() does not propagate untrustiness properly because
-    #  the built-in 'bytes' class has no untrusted/trust-aware type yet
+    # encode()
+    b = base_str.encode()
+    assert type(b) == bytes
+
+    b = untrusted_str.encode()
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is False
+
+    b = synthesized_str.encode()
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    b = str_literal.encode()
+    assert type(b) == builtins.bytes
 
     # endswith()
     b = base_str.endswith("o")
@@ -2176,6 +2218,7 @@ def bytearray_test():
     assert type(len(untrusted_b)) == UntrustedInt
 
 
+# TODO: not thoroughly tested
 def decimal_test():
     base_decimal = Decimal('3.14')
     # Make sure UntrustedDecimal can take all forms acceptable by Decimal
@@ -2261,11 +2304,12 @@ if __name__ == "__main__":
     from django.splice.trustedtypes import TrustAwareInt as int
     from django.splice.trustedtypes import TrustAwareFloat as float
     from django.splice.trustedtypes import TrustAwareStr as str
+    from django.splice.trustedtypes import TrustAwareBytes as bytes
     from django.splice.trustedtypes import TrustAwareBytearray as bytearray
     from django.splice.trustedtypes import TrustAwareDecimal as Decimal
     # Import from this file to fix the namespace issue. Reference:
     # https://stackoverflow.com/questions/15159854/python-namespace-main-class-not-isinstance-of-package-class
-    from django.splice.untrustedtypes import (UntrustedInt, UntrustedFloat, UntrustedStr,
+    from django.splice.untrustedtypes import (UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedBytes,
                                               UntrustedBytearray, UntrustedDecimal)
 
     int_test()

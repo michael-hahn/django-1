@@ -34,6 +34,14 @@ class TrustAwareStr(TrustAwareMixin, str):
         return TrustAwareStr(other.__add__(self))
 
 
+class TrustAwareBytes(TrustAwareMixin, bytes):
+    @classmethod
+    def trustify(cls, value):
+        if isinstance(value, UntrustedMixin):
+            value = bytes(value)
+        return TrustAwareBytes(value)
+
+
 class TrustAwareBytearray(TrustAwareMixin, bytearray):
     @classmethod
     def trustify(cls, value):
