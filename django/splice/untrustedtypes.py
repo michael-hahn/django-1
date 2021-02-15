@@ -2217,6 +2217,13 @@ def bytearray_test():
     assert len(untrusted_b) == 5
     assert type(len(untrusted_b)) == UntrustedInt
 
+    # __setitem__
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b)
+    b[3] = UntrustedInt(113, synthesized=True)
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+
 
 # TODO: not thoroughly tested
 def decimal_test():
