@@ -1,534 +1,14 @@
 """Untrusted classes."""
 
-from collections import UserString
 from decimal import Decimal
 from datetime import datetime
 
-import inspect
-import functools
-import warnings
-
-from django.splice.backends.base import BaseStruct
-
-
-# DEBUGGING FUNCTIONS #################################################################################################
-def synthesis_debug(func):
-    """
-    A function decorator used to decorate modified
-    functions in the original Django framework for
-    debugging our imposed synthesis framework.
-    """
-
-    @functools.wraps(func)
-    def get_class(method):
-        """
-        Get the class that defines the called function/method.
-        It is unlikely that we encounter all cases defined
-        below, but just for completeness:
-        https://stackoverflow.com/a/25959545/9632613.
-        """
-        # If the method is a partial function
-        if isinstance(method, functools.partial):
-            return get_class(method.func)
-        # If it is a method (bounded to a class)
-        if inspect.ismethod(method) or \
-            (inspect.isbuiltin(method) and
-             getattr(method, '__self__', None) is not None and
-             getattr(method.__self__, '__class__', None)):
-            for cls in inspect.getmro(method.__self__.__class__):
-                if method.__name__ in cls.__dict__:
-                    return cls
-            method = getattr(method, '__func__', method)  # fallback to __qualname__ parsing
-        if inspect.isfunction(method):
-            cls = getattr(inspect.getmodule(method),
-                          method.__qualname__.split('.<locals>', 1)[0].rsplit('.', 1)[0], None)
-            if isinstance(cls, type):
-                return cls
-        return getattr(method, '__objclass__', None)  # handle special descriptor objects
-
-    def wrapper(*args, **kwargs):
-        # Get the name of the function
-        func_name = func.__name__
-        # Get the class that defines the called function (method)
-        cls_name = get_class(func).__name__
-        res = func(*args, **kwargs)
-        if isinstance(res, UntrustedMixin):
-            res = res.to_trusted()
-        res_type = type(res).__name__
-        print("[SYNTHESIS DEBUG] {func} (in class: {cls}) -> ({type}) {res}".format(func=func_name,
-                                                                                    cls=cls_name,
-                                                                                    type=res_type,
-                                                                                    res=res))
-        return res
-
-    return wrapper
-
-
-#######################################################################################################################
-def to_untrusted(value, synthesized):
-    """
-    Convert a value to its corresponding untrusted
-    type if the type exists. The flag will be set
-    as synthesized. If there exists no corresponding
-    untrusted version, we return the value itself.
-    If value is already an untrusted value, this
-    function can be used to modify synthesized flag.
-    """
-    # If value is already an Untrusted type
-    if isinstance(value, UntrustedMixin):
-        value.synthesized = synthesized
-        return value
-    # bool is a subclass of int, so we must check it first
-    # bool cannot be usefully converted to an untrusted type
-    elif isinstance(value, bool):
-        return value
-    elif isinstance(value, int):
-        return UntrustedInt(value, synthesized=synthesized)
-    elif isinstance(value, float):
-        return UntrustedFloat(value, synthesized=synthesized)
-    elif isinstance(value, Decimal):
-        return UntrustedDecimal(value, synthesized=synthesized)
-    elif isinstance(value, str) or isinstance(value, UserString):
-        return UntrustedStr(value, synthesized=synthesized)
-    elif isinstance(value, bytearray):
-        return UntrustedBytearray(value, synthesized=synthesized)
-    #####################################################
-    # TODO: Add more casting here for new untrusted types
-    elif isinstance(value, datetime):
-        # Reconstruct an UntrustedDatetime object from a datetime
-        # object requires an indirection (you cannot just pass in
-        # datetime value to UntrustedDatetime().
-        year = value.year
-        month = value.month
-        day = value.day
-        hour = value.hour
-        minute = value.minute
-        second = value.second
-        microsecond = value.microsecond
-        return UntrustedDatetime(year=year,
-                                 month=month,
-                                 day=day,
-                                 hour=hour,
-                                 minute=minute,
-                                 second=second,
-                                 microsecond=microsecond,
-                                 synthesized=synthesized)
-    #####################################################
-    #  Recursively convert values in list or other structured data
-    #  Note that we do not just use list/dict/set comprehension as
-    #  we do not want this function to create a new list/dict/set
-    #  object since lists/dicts/sets are mutable and may be passed
-    #  around in recursive functions to be mutated.
-    elif isinstance(value, list):
-        for i in range(len(value)):
-            value[i] = to_untrusted(value[i], synthesized)
-        return value
-    elif isinstance(value, tuple):
-        # Creating a new tuple is fine because tuple is immutable
-        return tuple(to_untrusted(v, synthesized) for v in value)
-    # Cannot modify a set during iteration, so we do it this way:
-    elif isinstance(value, set):
-        list_copy = [to_untrusted(v, synthesized) for v in value]
-        value.clear()
-        value.update(list_copy)
-        return value
-    # Cannot modify a dict during iteration, so we do it this way:
-    elif isinstance(value, dict):
-        untrusted_dict = {to_untrusted(k, synthesized): to_untrusted(v, synthesized)
-                          for k, v in value.items()}
-        value.clear()
-        value.update(untrusted_dict)
-        return value
-    # TODO: We may consider a generic Untrusted type, instead of returning a trusted value.
-    else:
-        return value
-
-
-def is_synthesized(value):
-    """
-    A helper function that checks if a value
-    contains a set (True) synthesized flag.
-    """
-    synthesized = False
-    if isinstance(value, UntrustedMixin):
-        return value.synthesized
-    # Recursively check values in a list or other data structures
-    # TODO: for data structures with key/value pairs, if __iter__ returns
-    #  keys only (in the for loop), then only keys are checked for now.
-    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or \
-        isinstance(value, dict) or isinstance(value, BaseStruct):
-        for v in value:
-            if is_synthesized(v):
-                synthesized = True
-                break
-    return synthesized
-
-
-def add_synthesis(func):
-    """
-    A function decorator that makes the original function (that
-    may not be synthesis-aware) return untrusted values if defined.
-    """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        res = func(*args, **kwargs)
-        # Some quick return (no need to wrap those)
-        if res is NotImplemented or res is None:
-            return res
-        # Set synthesized flag if *any* args/kwargs sets the flag
-        # TODO: does this *always* make sense?
-        synthesized = False
-        for arg in args:
-            if is_synthesized(arg):
-                synthesized = True
-                break
-        for key, value in kwargs.items():
-            if is_synthesized(value):
-                synthesized = True
-                break
-        return to_untrusted(res, synthesized)
-
-    return wrapper
-
-
-def untrustify(func):
-    """
-    A function decorator that converts all trusted args and kwargs
-    to their untrusted version. Values that cannot be untrustified
-    will remain. This conversion always set the synthesized flag to False
-    unless the value is already untrusted and it has a True synthesized flag.
-    """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        args = list(args)
-        for i, arg in enumerate(args):
-            if isinstance(arg, UntrustedMixin):
-                args[i] = arg
-            else:
-                args[i] = to_untrusted(arg, synthesized=False)
-        kwargs = dict(kwargs)
-        for key, value in kwargs.items():
-            if isinstance(value, UntrustedMixin):
-                kwargs[key] = value
-            else:
-                kwargs[key] = to_untrusted(value, synthesized=False)
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def synthesis_check(func, warn):
-    """
-    A function decorator factory which builds various function decorator
-    depends on warn parameter. Overall it checks if a synthesized value is
-    returned from the original func. If warn is True, only warning is output;
-    otherwise, ValueError is raised.
-    """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        synthesized = False
-        res = func(*args, **kwargs)
-        if is_synthesized(res):
-            synthesized = res.synthesized
-        if not synthesized:
-            return res
-        else:
-            if warn:
-                warnings.warn("Synthesized value output by {func} "
-                              "might be used unintentionally".format(func=func.__name__),
-                              category=RuntimeWarning,
-                              stacklevel=2)
-                return res
-            else:
-                raise RuntimeError("Synthesized value output by {func} "
-                                   "should not be used at all".format(func=func.__name__))
-
-    return wrapper
-
-
-# Actual decorators manufactured by the synthesis_check decorator factory
-synthesis_warning = functools.partial(synthesis_check, warn=True)
-synthesis_error = functools.partial(synthesis_check, warn=False)
-
-
-def add_synthesis_to_func(cls):
-    """
-    A class decorator that decorates all functions in cls
-    so that they are synthesis-aware. If cls is a subclass of
-    some base classes, then we want functions in base class to be
-    synthesis-aware as well.
-
-    Important note: Any cls (UntrustedX only) function to be decorated
-    must start with either "synthesis_" or "_synthesis_" (for protected
-    methods), while base class functions have no such restriction
-    (since it is likely that developers have no control over the
-    base class). Using this convention, developers can prevent
-    base class functions from being decorated by overriding the
-    function (and just calling base class function in the override).
-    If, for example, the developer needs to override a __dunder__ function,
-    and the overridden function needs to be decorated, they should first
-    implement a helper function '_synthesize__dunder__' and then
-    call the helper function in the __dunder__ function. As such,
-    _synthesize__dunder__ will be decorated (and therefore the
-    calling __dunder__ function).
-    """
-    # set of callable function names already been decorated/inspected
-    handled_funcs = set()
-    # First handle all functions in cls class
-    # TODO: (non-urgent) __dict__ does not return __slots__
-    #  so will not work if cls uses __slots__ instead of __dict__
-    # NOTE: Do NOT use __dict__[key] to test callable(), use getattr() instead. Not because
-    # of performance, but for more important reasons! For example, callable(__dict__["__new__"])
-    # returns False because it is a class method (in fact, all static and class methods will
-    # return False if use __dict__ instead of getattr() to obtain the function!
-    # Reference:
-    # https://stackoverflow.com/questions/14084897/getattr-versus-dict-lookup-which-is-faster
-    for key in cls.__dict__:
-        # Only callable functions are decorated
-        value = getattr(cls, key)
-        if not callable(value):
-            continue
-        # All callable functions are inspected in cls
-        handled_funcs.add(key)
-        # Decorate only 'synthesis_' or '_synthesis_' prefixed functions in cls.
-        # See example usage in __hash__() in UntrustedInt and UntrustedStr.
-        if key.startswith("synthesis_") or key.startswith("_synthesis_"):
-            setattr(cls, key, add_synthesis(value))
-
-    # Handle base class functions if exists. Base classes are
-    # unlikely to follow our synthesis naming convention.
-    # However, some __dunder__ methods clearly should *not* be
-    # decorated, even if they are callable, we will add them
-    # in handled_funcs. Non-decorated methods will follow the
-    # traditional MRO calling order!
-    # Note that __dict__, __module__, __doc__ are not callable
-    # so they will not be decorated in the first place.
-    handled_funcs.update({'__new__',
-                          '__init__',
-                          '__del__',
-                          '__getattr__',
-                          '__getattribute__',
-                          '__setattr__',
-                          '__delattr__',
-                          '__dir__',
-                          '__get__',
-                          '__set__',
-                          '__delete__',
-                          '__set_name__',
-                          '__slots__',
-                          '__prepare__',
-                          '__class__',
-                          '__iter__',
-                          '__reversed__',
-                          '__enter__',
-                          '__exit__',
-                          '__subclasshook__',
-                          '__subclasscheck__',
-                          '__instancecheck__',
-                          })
-    # __mro__ defines the list of *ordered* base classes
-    # (the first being cls and the second being UntrustedMixin).
-    # UntrustedMixin should *not* be decorated, add all of its callable functions in handled_funcs
-    mixin_cls = cls.__mro__[1]  # IMPORTANT: UntrustedMixin MUST be the first parent class!
-    for key in mixin_cls.__dict__:
-        value = getattr(mixin_cls, key)
-        if not callable(value):
-            continue
-        handled_funcs.add(key)
-    # Handle the remaining base classes
-    for base in cls.__mro__[2:]:
-        for key in base.__dict__:
-            value = getattr(base, key)
-            # Only callable functions that are not handled by previous classes
-            if not callable(value) or key in handled_funcs:
-                continue
-            # All callable functions are inspected in the current base class
-            handled_funcs.add(key)
-            # Delegate add_synthesis() to handle other cases
-            # since there is not much convention we can specify.
-            # Note that it is possible add_synthesis() can just
-            # return the same function (value) with no changes.
-            # Note that we are adding those attributes to cls!
-            # Therefore, once decorated by add_synthesis(), cls
-            # will always call the decorated function (since it
-            # will be placed at the top of the MRO), not the one
-            # in any of the superclasses!
-            setattr(cls, key, add_synthesis(value))
-    # NOTE: Method calling order (when called fom an UntrustedX object) --
-    # 1. Original cls (UntrustedX) methods (decorated and non-decorated) and
-    #    all decorated methods (including methods from all base classes).
-    # 2. All methods defined in UntrustedMixin.
-    # 3. All other non-decorated methods from classes other than UntrustedX
-    #    and UntrustedMixin follow the original MRO.
-    return cls
-
-
-class UntrustedMixin(object):
-    """
-    A Mixin class for adding the Untrusted feature to other classes.
-
-    Important note: for __init_subclass__'s add_synthesis_to_func() to work
-    correct, UntrustedMixin must used as the *first* parent class in a subclass.
-    """
-
-    def __init__(self, synthesized=False, *args, **kwargs):
-        """A synthesized flag to id if a value is synthesized."""
-        # Forwards all unused arguments to other base classes down the MRO line.
-        self._synthesized = synthesized
-        super().__init__(*args, **kwargs)
-
-    def __init_subclass__(cls, **kwargs):
-        """
-        Whenever a class inherits from this, this function is called on that class,
-        so that we can change the behavior of subclasses. This is closely related to
-        class decorators, but where class decorators only affect the specific class
-        they’re applied to, __init_subclass__ solely applies to future subclasses of
-        the class defining the method. Here we use both __init_subclass__ and class
-        decorator, so that a subclass of UntrustedMixin and its subclasses can be decorated.
-        """
-        super().__init_subclass__(**kwargs)
-        add_synthesis_to_func(cls)
-
-    #  We comment out the following code, and use add_synthesis_to_func() to decorate
-    #  __int__ instead. But here is the trade-off:
-    #  1. If we use add_synthesis_to_func(), __int__ will still return UntrustedInt
-    #     type and if the value is synthesized the returned value will also be synthesized;
-    #     if we use the method below and if the original value is synthesized, we
-    #     will receive a RuntimeError.
-    #  2. However, if we use add_synthesis_to_func(), int() will cast both synthesized
-    #     untrusted but non-synthesized value to int(), but if we use the method below,
-    #     we will at least receive a RuntimeError.
-    #  However, since developers should always use to_trusted() instead of explicit
-    #  casting, we decide to use add_synthesis_to_func() like most other methods.
-    # @add_synthesis
-    # def __int__(self):
-    #     """__int__ will not be decorated in add_synthesis_to_func() since we override
-    #     it here. We re-decorate using @add_synthesis. We do this, instead of
-    #     decorating __int__ directly in add_synthesis_to_func(), because
-    #     1. Decorating __int__ does not change the fact that int() will ALWAYS
-    #        returns an instance of EXACT int (reference:
-    #        https://hg.python.org/cpython/rev/81f229262921). This is decided by
-    #        CPython and cannot be changed at this level.
-    #     2. Because of 1. the most we can do is to raise an error if int()
-    #        conversion is performed on not just untrusted but synthesized value.
-    #     3. We cannot do 2. if we decorate __int__ in add_synthesis_to_func().
-    #     4. We use @add_synthesis to decorate __int__ here so that __int__() call
-    #        still return UntrustedInt, but not int.
-    #     This is safe conversion but conversion may still fail if the input to int()
-    #     cannot be converted to an int."""
-    #      if self.synthesized:
-    #         raise RuntimeError("cannot convert a synthesized value to a trusted int value")
-    #     else:
-    #         return super().__int__()
-
-    #  UPDATE: We decide to still override __int__ here to simply DISALLOW the use
-    #          of int() altogether on UntrustedInt.
-    def __int__(self):
-        raise TypeError("cannot use int() to coerce to int. Use to_trusted() instead.")
-
-    #  We comment out the following code for the same reason as in __int__ above.
-    # @add_synthesis
-    # def __float__(self):
-    #     """__float__ is treated this way for the same reason as __int__ (see above).
-    #     float() cannot return an instance of a strict subclass of float. The ability
-    #     to return an instance of a strict subclass of float is deprecated (CPython).
-    #     This is safe conversion but conversion may still fail if the input to float()
-    #     cannot be converted to a float."""
-    #     if self.synthesized:
-    #         raise RuntimeError("cannot convert a synthesized value to a trusted float value")
-    #     else:
-    #         return super().__float__()
-
-    #  UPDATE: We decide to still override __float__ here to simply DISALLOW the use
-    #          of float() altogether on UntrustedInt.
-    def __float__(self):
-        raise TypeError("cannot use float() to coerce to float. Use to_trusted() instead.")
-
-    # We wanted to override __bool__() but __bool__() must return a bool object, nothing else.
-
-    #  NOTE: Unlike __int__ and __float__, __str__ and str() return TypeError: __str__ returned
-    #  non-string (type UntrustedStr) if casting returns any other types than the built-in
-    #  string type (e.g., UntrustedStr). This is good as we do NOT want to allow casting from
-    #  UntrustedStr to str using str() or __str__; we want a more explicit casting call.
-    #  Therefore, we can use add_synthesis_to_func() to directly decorate __str__ (basically
-    #  this decoration will make sure that str() and __str__() will lead to a TypeError if used
-    #  to cast UntrustedStr. The same applies to __repr__ (repr()) and __format__ (format()).
-    #
-    #  Note: comment out __str__, __repr__, and __format__ and let decoration and the type system
-    #        to handle illegal string coercion (from any type of untrusted values)
-    # def __str__(self):
-    #     return super().__str__()
-    #
-    # def __repr__(self):
-    #     return super().__repr__()
-    #
-    # def __format__(self, format_spec):
-    #     return super().__format__(format_spec)
-
-    def to_trusted(self, forced=False):
-        """Convert a value to its corresponding trusted type. Conversion results in
-        a RuntimeError if the untrusted value is synthesized, unless 'forced' is set
-        to be True. If 'forced' is True, conversion always works. """
-        if self.synthesized and not forced:
-            raise RuntimeError("cannot convert a synthesized value to a trusted value")
-        if not isinstance(self, UntrustedMixin):
-            return self
-
-        if isinstance(self, UntrustedInt):
-            return super().__int__()
-        elif isinstance(self, UntrustedFloat):
-            return super().__float__()
-        elif isinstance(self, UntrustedStr):
-            return super().__str__()
-        elif isinstance(self, UntrustedDecimal):
-            return Decimal(self)
-        elif isinstance(self, UntrustedBytearray):
-            return bytearray(self)
-        #####################################################
-        # TODO: Add more casting here for new untrusted types
-        elif isinstance(self, UntrustedDatetime):
-            # Reconstruct an datetime object from an UntrustedDatetime
-            # object requires an indirection (the same as in to_untrusted())
-            year = self.year
-            month = self.month
-            day = self.day
-            hour = self.hour
-            minute = self.minute
-            second = self.second
-            microsecond = self.microsecond
-            return datetime(year=year,
-                            month=month,
-                            day=day,
-                            hour=hour,
-                            minute=minute,
-                            second=second,
-                            microsecond=microsecond)
-        #####################################################
-        # Last resort is that an object is wrapped in a class
-        # inherited only from UntrustedMixin, but dong so is
-        # very much discouraged! The following code is just
-        # a placeholder, do not use.
-        elif isinstance(self, UntrustedObject):
-            # The trusted value is in self.data
-            return self.data
-        else:
-            raise RuntimeError("cannot convert an unknown untrusted type")
-
-    @property
-    def synthesized(self):
-        return self._synthesized
-
-    @synthesized.setter
-    def synthesized(self, synthesized):
-        self._synthesized = synthesized
+from django.splice.utils import UntrustedMixin
 
 
 class UntrustedInt(UntrustedMixin, int):
     """
-    Subclass Python builtin int class and Untrusted Mixin.
+    Subclass Python trusted int class and UntrustedMixin.
     Note that synthesized is a *keyed* parameter.
     """
 
@@ -563,18 +43,22 @@ class UntrustedInt(UntrustedMixin, int):
         """
         Override hash function to use either our default
         hash or the user-provided hash function. This function
-        calls the helper function _synthesis_hash_() so that
+        calls the helper function _untrusted_hash_() so that
         __hash__() output can be decorated.
         """
-        return self._synthesis_hash_()
+        return self._untrusted_hash_()
 
-    def _synthesis_hash_(self):
+    def _untrusted_hash_(self):
         """Called by __hash__() but return a decorated value."""
         return type(self).custom_hash(self)
 
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedInt(value, synthesized=flag)
+
 
 class UntrustedFloat(UntrustedMixin, float):
-    """Subclass Python builtin float class and Untrusted Mixin."""
+    """Subclass Python trusted float class and UntrustedMixin."""
 
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
@@ -583,12 +67,13 @@ class UntrustedFloat(UntrustedMixin, float):
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedFloat(value, synthesized=flag)
 
-class UntrustedDecimal(UntrustedMixin, Decimal):
-    """
-    Subclass Python decimal module's Decimal class and Untrusted Mixin.
-    Decimal is immutable, so we should override __new__ and not just __init__.
-    """
+
+class UntrustedStr(UntrustedMixin, str):
+    """Subclass Python trusted float class and UntrustedMixin."""
 
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
@@ -597,17 +82,9 @@ class UntrustedDecimal(UntrustedMixin, Decimal):
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
-
-class UntrustedStr(UntrustedMixin, UserString):
-    """
-    Subclass collections module's UserString to create
-    a custom str class that behaves like Python's built-in
-    str but allows further customization. Use UntrustedMixin
-    to add the untrusted feature for the class.
-    """
-
-    def __init__(self, seq, *, synthesized=False):
-        super().__init__(synthesized, seq)
+    # NOTE: Old implementation of subclassing UserString instead of str
+    # def __init__(self, seq, *, synthesized=False):
+    #     super().__init__(synthesized, seq)
 
     @staticmethod
     def default_hash(input_bytes):
@@ -635,27 +112,78 @@ class UntrustedStr(UntrustedMixin, UserString):
 
     def __hash__(self):
         """
-        Override UserStr hash function to use either
+        Override str hash function to use either
         the default or the user-provided hash function.
         This function calls the helper function
-        _synthesis_hash_() so that __hash__() output
+        _untrusted_hash_() so that __hash__() output
         can be decorated.
         """
-        return self._synthesis_hash_()
+        return self._untrusted_hash_()
 
-    def _synthesis_hash_(self):
+    def _untrusted_hash_(self):
         """Called by __hash__() but return a decorated value."""
-        chars = bytes(self.data, 'ascii')
+        chars = bytes(self, 'ascii')
         return type(self).custom_hash(chars)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedStr(value, synthesized=flag)
+
+    def __radd__(self, other):
+        """Define __radd__ so a str literal + an untrusted str returns an untrusted str."""
+        synthesized = self.synthesized
+        if isinstance(other, UntrustedMixin):
+            synthesized |= other.synthesized
+        return UntrustedStr(other.__add__(self), synthesized=synthesized)
+
+
+class UntrustedBytes(UntrustedMixin, bytes):
+    """
+    Subclass Python builtin bytes class and UntrustedMixin.
+    """
+
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedBytes(value, synthesized=flag)
 
 
 class UntrustedBytearray(UntrustedMixin, bytearray):
     """
-    Subclass Python builtin bytearray class and Untrusted Mixin.
+    Subclass Python builtin bytearray class and UntrustedMixin.
     bytearray is mutable so we need not define __new__ ourselves.
     """
+
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized, *args, **kwargs)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedBytearray(value, synthesized=flag)
+
+
+class UntrustedDecimal(UntrustedMixin, Decimal):
+    """
+    Subclass Python decimal module's Decimal class and Untrusted Mixin.
+    Decimal is immutable, so we should override __new__ and not just __init__.
+    """
+
+    def __new__(cls, *args, synthesized=False, **kwargs):
+        self = super().__new__(cls, *args, **kwargs)
+        return self
+
+    def __init__(self, *args, synthesized=False, **kwargs):
+        super().__init__(synthesized)
+
+    @classmethod
+    def untrustify(cls, value, flag):
+        return UntrustedDecimal(value, synthesized=flag)
 
 
 class UntrustedDatetime(UntrustedMixin, datetime):
@@ -673,480 +201,2126 @@ class UntrustedDatetime(UntrustedMixin, datetime):
     def __init__(self, *args, synthesized=False, **kwargs):
         super().__init__(synthesized)
 
-
-class UntrustedObject(UntrustedMixin):
-    """
-    Convert objects that cannot inherit a trusted type. We
-    subclass only UntrustedMixin to add the type-agnostic
-    "untrusted" feature. The trusted object is stored in
-    self._data. Using this class is typically *not* necessary
-    and should be considered to be the last resort (for
-    example, if Python does not allow a class to be
-    subclassed for some reason) because this class does
-    *not* inherit any useful methods from the trusted data
-    type. Instead, whenever possible, one should always
-    create a new untrusted type by inheriting first from
-    UntrustedMixin and then from the corresponding trust
-    type (see UntrustedDatetime as a good example). If
-    you must use this way to create an untrusted class,
-    you should still use a descriptive class name. The
-    class definition here is just an example. Do not use.
-    """
-
-    def __init__(self, data, *, synthesized=False):
-        super().__init__(synthesized)
-        self._data = data
-
-    @property
-    def data(self):
-        return self._data
+    @classmethod
+    def untrustify(cls, value, flag):
+        year = value.year
+        month = value.month
+        day = value.day
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        return UntrustedDatetime(year=year,
+                                 month=month,
+                                 day=day,
+                                 hour=hour,
+                                 minute=minute,
+                                 second=second,
+                                 microsecond=microsecond,
+                                 synthesized=flag)
 
 
-def untrusted_int_test():
+def int_test():
     base_int = int("A", base=16)
     int_literal = 5
     untrusted_int_1 = UntrustedInt(15)
     untrusted_int_2 = UntrustedInt("B", base=16)
     synthesized_int_1 = UntrustedInt(12, synthesized=True)
 
-    untrusted_int_3 = untrusted_int_1 + untrusted_int_2
-    assert untrusted_int_3 == 26, "untrusted_int_3 should be 26, but it is {}.".format(untrusted_int_3)
-    assert untrusted_int_3.synthesized is False, "untrusted_int_3 should not be synthesized."
-    assert type(untrusted_int_3) == type(untrusted_int_1), "untrusted_int_3 type is not UntrustedInt"
+    # as_integer_ratio()
+    r_x, r_y = untrusted_int_1.as_integer_ratio()
+    assert r_x == 15
+    assert r_y == 1
+    assert r_x.synthesized is False
+    assert r_y.synthesized is False
+    assert type(r_x) == UntrustedInt
+    assert type(r_y) == UntrustedInt
 
-    untrusted_int_4 = untrusted_int_1 + base_int
-    assert untrusted_int_4 == 25, "untrusted_int_4 should be 25, but it is {}.".format(untrusted_int_4)
-    assert untrusted_int_4.synthesized is False, "untrusted_int_4 should not be synthesized."
-    assert type(untrusted_int_4) == type(untrusted_int_1), "untrusted_int_4 type is not UntrustedInt"
+    r_x, r_y = synthesized_int_1.as_integer_ratio()
+    assert r_x == 12
+    assert r_y == 1
+    assert r_x.synthesized is True
+    assert r_y.synthesized is True
+    assert type(r_x) == UntrustedInt
+    assert type(r_y) == UntrustedInt
 
-    untrusted_int_5 = untrusted_int_1 + int_literal
-    assert untrusted_int_5 == 20, "untrusted_int_5 should be 20, but it is {}.".format(untrusted_int_5)
-    assert untrusted_int_5.synthesized is False, "untrusted_int_5 should not be synthesized."
-    assert type(untrusted_int_5) == type(untrusted_int_1), "untrusted_int_5 type is not UntrustedInt"
+    r_x, r_y = base_int.as_integer_ratio()
+    assert r_x == 10
+    assert r_y == 1
+    assert type(r_x) == int
+    assert type(r_y) == int
 
-    synthesized_int_2 = synthesized_int_1 + untrusted_int_1
-    assert synthesized_int_2 == 27, "synthesized_int_2 should be 27, but it is {}.".format(synthesized_int_2)
-    assert synthesized_int_2.synthesized is True, "synthesized_int_2 should be synthesized."
-    assert type(synthesized_int_2) == type(synthesized_int_1), "synthesized_int_2 type is not UntrustedInt"
+    # FIXME: int_literal returns builtins int
+    r_x, r_y = int_literal.as_integer_ratio()
+    assert r_x == 5
+    assert r_y == 1
+    assert type(r_x) == builtins.int
+    assert type(r_y) == builtins.int
 
-    synthesized_int_3 = synthesized_int_1 + int_literal
-    assert synthesized_int_3 == 17, "synthesized_int_3 should be 17, but it is {}.".format(synthesized_int_3)
-    assert synthesized_int_3.synthesized is True, "synthesized_int_3 should be synthesized."
-    assert type(synthesized_int_3) == type(synthesized_int_1), "synthesized_int_3 type is not UntrustedInt"
+    # bit_length()
+    bl = untrusted_int_1.bit_length()
+    assert bl == 4
+    assert bl.synthesized is False
+    assert type(bl) == UntrustedInt
 
-    synthesized_int_4 = synthesized_int_1 + base_int
-    assert synthesized_int_4 == 22, "synthesized_int_4 should be 22, but it is {}.".format(synthesized_int_4)
-    assert synthesized_int_4.synthesized is True, "synthesized_int_4 should be synthesized."
-    assert type(synthesized_int_4) == type(synthesized_int_1), "synthesized_int_4 type is not UntrustedInt"
+    bl = synthesized_int_1.bit_length()
+    assert bl == 4
+    assert bl.synthesized is True
+    assert type(bl) == UntrustedInt
 
-    untrusted_int_6 = base_int + untrusted_int_1
-    """
-    Note: If the right operand’s type is a subclass of the left operand’s type and that subclass provides a
-    different implementation of the reflected method for the operation, this method will be called before the
-    left operand’s non-reflected method. This behavior allows subclasses to override their ancestors’ operations.
-    Reference: https://docs.python.org/3/reference/datamodel.html#object.__radd__.
-    """
-    assert untrusted_int_6 == 25, "untrusted_int_6 should be 25, but it is {}.".format(untrusted_int_6)
-    assert untrusted_int_6.synthesized is False, "untrusted_int_6 should not be synthesized."
-    assert type(untrusted_int_6) == type(untrusted_int_1), "untrusted_int_6 type is not UntrustedInt"
+    bl = base_int.bit_length()
+    assert bl == 4
+    assert type(bl) == int
 
-    untrusted_int_7 = int_literal + untrusted_int_1
-    assert untrusted_int_7 == 20, "untrusted_int_7 should be 20, but it is {}.".format(untrusted_int_7)
-    assert untrusted_int_7.synthesized is False, "untrusted_int_7 should not be synthesized."
-    assert type(untrusted_int_7) == type(untrusted_int_1), "untrusted_int_7 type is not UntrustedInt"
+    # FIXME: int_literal returns builtins int
+    bl = int_literal.bit_length()
+    assert bl == 3
+    assert type(bl) == builtins.int
 
-    untrusted_int_8 = untrusted_int_1 - base_int
-    assert untrusted_int_8 == 5, "untrusted_int_8 should be 5, but it is {}.".format(untrusted_int_8)
-    assert untrusted_int_8.synthesized is False, "untrusted_int_8 should not be synthesized."
-    assert type(untrusted_int_8) == type(untrusted_int_1), "untrusted_int_8 type is not UntrustedInt"
+    # conjugate()
+    c = untrusted_int_1.conjugate()
+    assert c == untrusted_int_1
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
 
-    untrusted_int_9 = base_int - untrusted_int_1
-    assert untrusted_int_9 == -5, "untrusted_int_9 should be -5, but it is {}.".format(untrusted_int_9)
-    assert untrusted_int_9.synthesized is False, "untrusted_int_9 should not be synthesized."
-    assert type(untrusted_int_9) == type(untrusted_int_1), "untrusted_int_9 type is not UntrustedInt"
+    c = synthesized_int_1.conjugate()
+    assert c == synthesized_int_1
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
 
-    synthesized_int_5 = int_literal - synthesized_int_1
-    assert synthesized_int_5 == -7, "synthesized_int_5 should be -7, but it is {}.".format(synthesized_int_5)
-    assert synthesized_int_5.synthesized is True, "synthesized_int_5 should be synthesized."
-    assert type(synthesized_int_5) == type(synthesized_int_1), "synthesized_int_5 type is not UntrustedInt"
+    c = base_int.conjugate()
+    assert c == base_int
+    assert type(c) == int
 
-    synthesized_int_6 = int_literal * synthesized_int_1
-    assert synthesized_int_6 == 60, "synthesized_int_6 should be 60, but it is {}.".format(synthesized_int_6)
-    assert synthesized_int_6.synthesized is True, "synthesized_int_6 should be synthesized."
-    assert type(synthesized_int_6) == type(synthesized_int_1), "synthesized_int_6 type is not UntrustedInt"
+    # FIXME: int_literal returns builtins int
+    bl = int_literal.conjugate()
+    assert bl == 5
+    assert type(bl) == builtins.int
 
-    synthesized_int_7 = synthesized_int_1 // int_literal
-    assert synthesized_int_7 == 2, "synthesized_int_7 should be 2, but it is {}.".format(synthesized_int_7)
-    assert synthesized_int_7.synthesized is True, "synthesized_int_7 should be synthesized."
-    assert type(synthesized_int_7) == type(synthesized_int_1), "synthesized_int_7 type is not UntrustedInt"
+    # from_bytes()
+    i = UntrustedInt.from_bytes([1, 3, 4], byteorder='big')
+    assert i == 66308
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
 
-    synthesized_float_8 = synthesized_int_1 / int_literal
-    assert synthesized_float_8 == 2.4, "synthesized_float_8 should be 2.4, but it is {}.".format(synthesized_float_8)
-    assert synthesized_float_8.synthesized is True, "synthesized_float_8 should be synthesized."
-    assert type(synthesized_float_8) == UntrustedFloat, "synthesized_float_8 type is not UntrustedFloat"
+    i = UntrustedInt.from_bytes([1, UntrustedInt(3, synthesized=True), 4], byteorder='big')
+    assert i == 66308
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
 
-    synthesized_float_9 = int_literal / synthesized_int_1
-    assert synthesized_float_9 == 5 / 12, "synthesized_float_9 should be 5/12, " \
-                                          "but it is {}.".format(synthesized_float_9)
-    assert synthesized_float_9.synthesized is True, "synthesized_float_9 should be synthesized."
-    assert type(synthesized_float_9) == UntrustedFloat, "synthesized_float_9 type is not UntrustedFloat"
+    i = int.from_bytes([UntrustedInt(1, synthesized=True), 3, 4], byteorder='big')
+    assert i == 66308
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = int.from_bytes([1, 3, 4], byteorder='big')
+    assert i == 66308
+    assert type(i) == int
+
+    # to_bytes()
+    b = untrusted_int_1.to_bytes(10, 'big')
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is False
+
+    b = synthesized_int_1.to_bytes(10, 'big')
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is True
+
+    b = base_int.to_bytes(10, 'big')
+    assert type(b) == bytes
+
+    # FIXME: int_literal returns builtins int
+    b = int_literal.to_bytes(10, 'big')
+    assert type(b) == builtins.bytes
+
+    # abs() (__abs__)
+    i = abs(-untrusted_int_1)
+    assert i == untrusted_int_1
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = (-untrusted_int_1).__abs__()
+    assert i == untrusted_int_1
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = abs(-synthesized_int_1)
+    assert i == synthesized_int_1
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = (-synthesized_int_1).__abs__()
+    assert i == synthesized_int_1
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = abs(-base_int)
+    assert i == base_int
+    assert type(i) == int
+
+    i = (-base_int).__abs__()
+    assert i == base_int
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = abs(-int_literal)
+    assert i == int_literal
+    assert type(i) == builtins.int
+
+    i = (-int_literal).__abs__()
+    assert i == int_literal
+    assert type(i) == builtins.int
+
+    # + (__add__)
+    i = untrusted_int_1 + untrusted_int_2
+    assert i == 26
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1.__add__(untrusted_int_2)
+    assert i == 26
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1 + base_int
+    assert i == 25
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1.__add__(base_int)
+    assert i == 25
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1 + int_literal
+    assert i == 20
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1.__add__(int_literal)
+    assert i == 20
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 + untrusted_int_1
+    assert i == 27
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__add__(untrusted_int_1)
+    assert i == 27
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 + int_literal
+    assert i == 17
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__add__(int_literal)
+    assert i == 17
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 + base_int
+    assert i == 22
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__add__(base_int)
+    assert i == 22
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int + untrusted_int_1
+    assert i == 25
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = base_int.__add__(untrusted_int_1)
+    assert i == 25
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = int_literal + untrusted_int_1
+    assert i == 20
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    # FIXME: int_literal works only with reflected methods (above), not with directly calling special method (below)
+    i = int_literal.__add__(untrusted_int_1)
+    assert i == 20
+    assert type(i) == builtins.int
+
+    i = int_literal + synthesized_int_1
+    assert i == 17
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = int_literal.__add__(synthesized_int_1)
+    assert i == 17
+    assert type(i) == builtins.int
+
+    i = int_literal + base_int
+    assert i == 15
+    assert type(i) == int
+
+    i = int_literal.__add__(base_int)
+    assert i == 15
+    assert type(i) == builtins.int
+
+    i = base_int + int_literal
+    assert i == 15
+    assert type(i) == int
+
+    i = base_int.__add__(int_literal)
+    assert i == 15
+    assert type(i) == int
+
+    # & (__and__) Similar behavior as + (__add__). Skip __or__.
+    i = synthesized_int_1 & base_int
+    assert i == 8
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int & untrusted_int_1
+    assert i == 10
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = base_int & int_literal
+    assert i == 0
+    assert type(i) == int
+
+    i = int_literal & base_int
+    assert i == 0
+    assert type(i) == int
+
+    # TODO: __bool__ always returns bool
+
+    # ceil() (__ceil__)
+    i = math.ceil(untrusted_int_1)
+    assert i == 15
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = math.ceil(synthesized_int_1)
+    assert i == 12
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = math.ceil(base_int)
+    assert i == 10
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = math.ceil(int_literal)
+    assert i == 5
+    assert type(i) == builtins.int
+
+    # divmod() (__divmod__)
+    d_x, d_y = divmod(untrusted_int_1, 4)
+    assert d_x == 3
+    assert d_y == 3
+    assert d_x.synthesized is False
+    assert d_y.synthesized is False
+    assert type(d_x) == UntrustedInt
+    assert type(d_y) == UntrustedInt
+
+    d_x, d_y = divmod(15, UntrustedInt(4))
+    assert d_x == 3
+    assert d_y == 3
+    assert d_x.synthesized is False
+    assert d_y.synthesized is False
+    assert type(d_x) == UntrustedInt
+    assert type(d_y) == UntrustedInt
+
+    d_x, d_y = divmod(synthesized_int_1, 4)
+    assert d_x == 3
+    assert d_y == 0
+    assert d_x.synthesized is True
+    assert d_y.synthesized is True
+    assert type(d_x) == UntrustedInt
+    assert type(d_y) == UntrustedInt
+
+    d_x, d_y = divmod(base_int, 4)
+    assert d_x == 2
+    assert d_y == 2
+    assert type(d_x) == int
+    assert type(d_y) == int
+
+    d_x, d_y = divmod(10, int(4))
+    assert d_x == 2
+    assert d_y == 2
+    assert type(d_x) == int
+    assert type(d_y) == int
+
+    # FIXME: int_literal works only with reflected methods (above), not with directly calling special method (below)
+    d_x, d_y = int_literal.__divmod__(int(4))
+    assert d_x == 1
+    assert d_y == 1
+    assert type(d_x) == builtins.int
+    assert type(d_y) == builtins.int
+
+    # FIXME: int_literal returns builtins int
+    d_x, d_y = divmod(int_literal, 4)
+    assert d_x == 1
+    assert d_y == 1
+    assert type(d_x) == builtins.int
+    assert type(d_y) == builtins.int
+
+    # == (__eq__)
+    assert untrusted_int_1 == 15
+    assert untrusted_int_1 == int(15)
+    assert synthesized_int_1 == UntrustedInt(12)
+    assert 15 == untrusted_int_1
+    assert int_literal == int(5)
+    assert 12 == synthesized_int_1
+
+    # float() (__float__)
+    try:
+        float(synthesized_int_1)
+    except TypeError as e:
+        print("12 is synthesized, converting it to float using float() results in "
+              "TypeError: {error}".format(error=e))
+    assert synthesized_int_1.to_trusted(forced=True) == 12
+    assert type(float(synthesized_int_1.to_trusted(forced=True))) == float
 
     try:
-        converted_int_1 = int(synthesized_int_6)
+        synthesized_int_1.__float__()
     except TypeError as e:
-        print("60 is synthesized, converting it to int using int() results in "
+        print("12 is synthesized, converting it to float using __float__ results in "
+              "TypeError: {error}".format(error=e))
+    assert synthesized_int_1.to_trusted(forced=True) == 12
+    assert type(synthesized_int_1.to_trusted(forced=True).__float__()) == float
+
+    try:
+        float(untrusted_int_1)
+    except TypeError as e:
+        print("15 is untrusted, converting it to float using float() results in "
+              "TypeError: {error}".format(error=e))
+    assert untrusted_int_1.to_trusted() == 15
+    assert type(float(untrusted_int_1.to_trusted())) == float
+
+    try:
+        untrusted_int_1.__float__()
+    except TypeError as e:
+        print("15 is untrusted, converting it to float using __float__ results in "
+              "TypeError: {error}".format(error=e))
+    assert untrusted_int_1.to_trusted() == 15
+    assert type(untrusted_int_1.to_trusted().__float__()) == float
+
+    assert float(base_int) == 10
+    assert type(float(base_int)) == float
+
+    assert base_int.__float__() == 10
+    assert type(base_int.__float__()) == float
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast float() to type float. When the calling object
+    #  is an int literal, there is no interposition from our framework,
+    #  but because the built-in float is shadowed by our own float, Python
+    #  ensures return value to be our float. However, the same enforcement
+    #  does not apply when __float__ is called directly from an int literal
+    assert float(int_literal) == 5
+    assert type(float(int_literal)) == float
+
+    assert int_literal.__float__() == 5
+    assert type(int_literal.__float__()) == builtins.float
+
+    # // (__floordiv__)
+    i = untrusted_int_1 // 4
+    assert i == 3
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = 15 // UntrustedInt(4)
+    assert i == 3
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 // 4
+    assert i == 3
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int // 4
+    assert i == 2
+    assert type(i) == int
+
+    i = base_int.__floordiv__(4)
+    assert i == 2
+    assert type(i) == int
+
+    i = 10 // int(4)
+    assert i == 2
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal.__floordiv__(int(4))
+    assert i == 1
+    assert type(i) == builtins.int
+
+    i = 10 // 4
+    assert i == 2
+    assert type(i) == builtins.int
+
+    # floor() (__floor__)
+    i = math.floor(untrusted_int_1)
+    assert i == untrusted_int_1
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = math.floor(synthesized_int_1)
+    assert i == synthesized_int_1
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = math.floor(base_int)
+    assert i == base_int
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = math.floor(int_literal)
+    assert i == int_literal
+    assert type(i) == builtins.int
+
+    # format() (__format__)
+    try:
+        "{}".format(untrusted_int_1)
+    except TypeError as e:
+        print("15 is untrusted, converting it to str using format() results in "
+              "TypeError: {error}".format(error=e))
+    s = untrusted_int_1.to_trusted()
+    assert type(format(s)) == str
+
+    try:
+        "{}".format(synthesized_int_1)
+    except TypeError as e:
+        print("12 is untrusted, converting it to str using format() results in "
+              "TypeError: {error}".format(error=e))
+    s = synthesized_int_1.to_trusted(forced=True)
+    assert type(format(s)) == str
+
+    s = format(base_int)
+    assert type(s) == str
+
+    # FIXME: int_literal format() returns builtins str
+    s = format(int_literal)
+    assert type(s) == builtins.str
+
+    # >= (__ge__) # Skip similar methods: __gt__, __le__, __Lt__, __ne__
+    assert untrusted_int_1 >= 15
+    assert untrusted_int_1 >= int(15)
+    assert synthesized_int_1 >= UntrustedInt(12)
+    assert 15 >= untrusted_int_1
+    assert int_literal >= int(5)
+    assert 12 >= synthesized_int_1
+
+    # hash() (__hash__)
+    h = hash(untrusted_int_1)
+    assert h.synthesized is False
+    assert type(h) == UntrustedInt
+
+    h = untrusted_int_1.__hash__()
+    assert h.synthesized is False
+    assert type(h) == UntrustedInt
+
+    h = hash(synthesized_int_1)
+    assert h.synthesized is True
+    assert type(h) == UntrustedInt
+
+    h = synthesized_int_1.__hash__()
+    assert h.synthesized is True
+    assert type(h) == UntrustedInt
+
+    h = hash(base_int)
+    assert type(h) == int
+
+    h = base_int.__hash__()
+    assert type(h) == int
+
+    # FIXME: int_literal returns builtins int
+    h = hash(int_literal)
+    assert type(h) == builtins.int
+
+    h = int_literal.__hash__()
+    assert type(h) == builtins.int
+
+    # __index__
+    i = untrusted_int_1.__index__()
+    assert i == 15
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__index__()
+    assert i == 12
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int.__index__()
+    assert i == 10
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal.__index__()
+    assert i == 5
+    assert type(i) == builtins.int
+
+    # int() (__int__)
+    try:
+        int(synthesized_int_1)
+    except TypeError as e:
+        print("12 is synthesized, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
     try:
-        converted_int_1 = synthesized_int_6.to_trusted()
+        synthesized_int_1.__int__()
+    except TypeError as e:
+        print("12 is synthesized, converting it to int using __int__ results in "
+              "TypeError: {error}".format(error=e))
+    try:
+        synthesized_int_1.to_trusted()
     except RuntimeError as e:
-        print("60 is synthesized, converting it to int using to_trusted() without force results in "
+        print("12 is synthesized, converting it to int using to_trusted() without force results in "
               "RuntimeError: {error}".format(error=e))
-    assert type(synthesized_int_6.to_trusted(forced=True)) == int, "explicitly converted synthesized_int_6 is not int"
+    assert type(synthesized_int_1.to_trusted(forced=True)) == int
 
     try:
-        converted_int_2 = int(untrusted_int_9)
+        int(untrusted_int_1)
     except TypeError as e:
-        print("-5 is untrusted, converting it to int using int() results in "
+        print("15 is untrusted, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
-    assert untrusted_int_9.to_trusted() == untrusted_int_9, "untrusted_int_9 should be -5, but it is not."
-    assert type(untrusted_int_9.to_trusted()) == int, "explicitly converted untrusted_int_9 is not int"
+    try:
+        untrusted_int_1.__int__()
+    except TypeError as e:
+        print("15 is untrusted, converting it to int using __int__ results in "
+              "TypeError: {error}".format(error=e))
+    assert untrusted_int_1.to_trusted() == untrusted_int_1
+    assert type(untrusted_int_1.to_trusted()) == int
 
-    converted_int_3 = int(base_int)
-    assert converted_int_3 == base_int, "converted_int_3 should be 10, but it is {}.".format(converted_int_3)
-    assert type(converted_int_3) == int, "converted_int_3 type is not int"
+    assert int(base_int) == base_int
+    assert type(int(base_int)) == int
+
+    assert base_int.__int__() == base_int
+    assert type(base_int.__int__()) == int
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast int() to type int. When the calling object
+    #  is an int literal, there is no interposition from our framework,
+    #  but because the built-in int is shadowed by our own float, Python
+    #  ensures return value to be our int. However, the same enforcement
+    #  does not apply when __int__ is called directly from an int literal
+    assert int(int_literal) == int_literal
+    assert type(int(int_literal)) == int
+
+    assert int_literal.__int__() == int_literal
+    assert type(int_literal.__int__()) == builtins.int
+
+    # ~ (__invert__)
+    i = ~untrusted_int_1
+    assert i == -16
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1.__invert__()
+    assert i == -16
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = ~synthesized_int_1
+    assert i == -13
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__invert__()
+    assert i == -13
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = ~base_int
+    assert i == -11
+    assert type(i) == int
+
+    i = base_int.__invert__()
+    assert i == -11
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = ~int_literal
+    assert i == -6
+    assert type(i) == builtins.int
+
+    i = int_literal.__invert__()
+    assert i == -6
+    assert type(i) == builtins.int
+
+    # << (__lshift__)
+    i = untrusted_int_1 << 3
+    assert i == 120
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = 15 << UntrustedInt(3)
+    assert i == 120
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 << 3
+    assert i == 96
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = 12 << UntrustedInt(3, synthesized=True)
+    assert i == 96
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int << 3
+    assert i == 80
+    assert type(i) == int
+
+    i = 10 << int(3)
+    assert i == 80
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal << 3
+    assert i == 40
+    assert type(i) == builtins.int
+
+    # % (__mod__)
+    i = untrusted_int_1 % 4
+    assert i == 3
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = 15 % UntrustedInt(4)
+    assert i == 3
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 % 4
+    assert i == 0
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int % 4
+    assert i == 2
+    assert type(i) == int
+
+    i = int_literal % int(4)
+    assert i == 1
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal % 4
+    assert i == 1
+    assert type(i) == builtins.int
+
+    # * (__mul__)
+    i = int_literal * synthesized_int_1
+    assert i == 60
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = int_literal * untrusted_int_1
+    assert i == 75
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = int_literal * base_int
+    assert i == 50
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal * int_literal
+    assert i == 25
+    assert type(i) == builtins.int
+
+    i = int_literal.__mul__(base_int)
+    assert i == 50
+    assert type(i) == builtins.int
+
+    # - (__neg__)
+    i = -untrusted_int_1
+    assert i == -15
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = -synthesized_int_1
+    assert i == -12
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = -base_int
+    assert i == -10
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = -int_literal
+    assert i == -5
+    assert type(i) == builtins.int
+
+    # | (__or__): similar to __and__.
+
+    # Skip + (__pos__). Similar to __neg__.
+
+    # ** (__pow__)
+    i = untrusted_int_1 ** 2
+    assert i == 225
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = 15 ** UntrustedInt(2)
+    assert i == 225
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1 ** 2
+    assert i == 144
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int ** 2
+    assert i == 100
+    assert type(i) == int
+
+    i = base_int.__pow__(2)
+    assert i == 100
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal.__pow__(int(2))
+    assert i == 25
+    assert type(i) == builtins.int
+
+    i = int_literal ** 2
+    assert i == 25
+    assert type(i) == builtins.int
+
+    # All reflected (swapped) methods are skipped -- should work as expected.
+    # __radd__, __rand__, __rdivmod__, __rfloordiv__, __rlshift__, __rmod__, __rmul__,
+    # __ror__, __rpow__, __rrshift__, __rsub__, __rtruediv__, __rxor__
+
+    # repr() (__repr__)
+    try:
+        repr(untrusted_int_1)
+    except TypeError as e:
+        print("15 is untrusted, converting it to str using repr() results in "
+              "TypeError: {error}".format(error=e))
+    try:
+        untrusted_int_1.__repr__()
+    except TypeError as e:
+        print("15 is untrusted, converting it to str using __repr__ results in "
+              "TypeError: {error}".format(error=e))
+    s = untrusted_int_1.to_trusted()
+    assert type(repr(s)) == str
 
     try:
-        converted_float_1 = float(synthesized_int_6)
+        repr(synthesized_int_1)
     except TypeError as e:
-        print("60 is synthesized, converting it to float using float() results in "
+        print("12 is untrusted, converting it to str using repr() results in "
               "TypeError: {error}".format(error=e))
-
     try:
-        converted_float_2 = float(untrusted_int_9)
+        synthesized_int_1.__repr__()
     except TypeError as e:
-        print("-5 is untrusted, converting it to float using float() results in "
+        print("12 is untrusted, converting it to str using __repr__ results in "
               "TypeError: {error}".format(error=e))
-    assert untrusted_int_9.to_trusted() == -5, "untrusted_int_9 should be -5, but it is not."
-    assert type(float(untrusted_int_9.to_trusted())) == float, "explicitly converted untrusted_int_9 is not float"
+    s = synthesized_int_1.to_trusted(forced=True)
+    assert type(repr(s)) == str
 
+    s = repr(base_int)
+    assert type(s) == str
+
+    s = base_int.__repr__()
+    assert type(s) == str
+
+    # FIXME: int_literal repr() and __repr__ return builtins str
+    s = repr(int_literal)
+    assert type(s) == builtins.str
+
+    s = int_literal.__repr__()
+    assert type(s) == builtins.str
+
+    # round() (__round__)
+    i = round(untrusted_int_1)
+    assert i == 15
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = untrusted_int_1.__round__()
+    assert i == 15
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = round(synthesized_int_1)
+    assert i == 12
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__round__()
+    assert i == 12
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = round(base_int)
+    assert i == 10
+    assert type(i) == int
+
+    i = base_int.__round__()
+    assert i == 10
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = round(int_literal)
+    assert i == 5
+    assert type(i) == builtins.int
+
+    i = int_literal.__round__()
+    assert i == 5
+    assert type(i) == builtins.int
+
+    # Skip >> (__rshift__), same as << (__lshift__).
+
+    # __sizeof__
+    i = untrusted_int_1.__sizeof__()
+    assert i == 28
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = synthesized_int_1.__sizeof__()
+    assert i == 28
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = base_int.__sizeof__()
+    assert i == 28
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = int_literal.__sizeof__()
+    assert i == 28
+    assert type(i) == builtins.int
+
+    # Skip - (__sub__), same as + (__add__)
+
+    # / (__truediv__)
+    i = synthesized_int_1 / int_literal
+    assert i == 2.4
+    assert i.synthesized is True
+    assert type(i) == UntrustedFloat
+
+    i = synthesized_int_1.__truediv__(int_literal)
+    assert i == 2.4
+    assert i.synthesized is True
+    assert type(i) == UntrustedFloat
+
+    i = int_literal / synthesized_int_1
+    assert i == 5 / 12
+    assert i.synthesized is True
+    assert type(i) == UntrustedFloat
+
+    i = base_int / 12
+    assert i == 10 / 12
+    assert type(i) == float
+
+    i = 12 / base_int
+    assert i == 12 / 10
+    assert type(i) == float
+
+    # FIXME: int_literal returns builtins float
+    i = int_literal.__truediv__(base_int)
+    assert i == 0.5
+    assert type(i) == builtins.float
+
+    i = int_literal / 12
+    assert i == 5 / 12
+    assert type(i) == builtins.float
+
+    # trunc() (__trunc__)
+    i = math.trunc(untrusted_int_1)
+    assert i == untrusted_int_1
+    assert i.synthesized is False
+    assert type(i) == UntrustedInt
+
+    i = math.trunc(synthesized_int_1)
+    assert i == synthesized_int_1
+    assert i.synthesized is True
+    assert type(i) == UntrustedInt
+
+    i = math.trunc(base_int)
+    assert i == base_int
+    assert type(i) == int
+
+    # FIXME: int_literal returns builtins int
+    i = math.trunc(int_literal)
+    assert i == int_literal
+    assert type(i) == builtins.int
+
+    # Skip ^ (__xor__), same as | (__or__)
+
+    # str() (__str__)
     try:
-        converted_str_1 = str(synthesized_int_6)
+        str(synthesized_int_1)
     except TypeError as e:
-        print("60 is synthesized, converting it to str using str() results in "
+        print("12 is synthesized, converting it to str using str() results in "
               "TypeError: {error}".format(error=e))
-
     try:
-        converted_str_2 = str(untrusted_int_9)
+        str(untrusted_int_1)
     except TypeError as e:
-        print("-5 is untrusted, converting it to str using str() results in "
+        print("15 is untrusted, converting it to str using str() results in "
               "TypeError: {error}".format(error=e))
+    assert str(untrusted_int_1.to_trusted()) == "15"
+    assert type(str(untrusted_int_1.to_trusted())) == str
+
+    assert str(base_int) == "10"
+    assert type(str(base_int)) == str
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast str() to type str. When the calling object
+    #  is an int literal, there is no interposition from our framework,
+    #  but because the built-in str is shadowed by our own str, Python
+    #  ensures return value to be our str. However, the same enforcement
+    #  does not apply when __str__ is called directly from an int literal
+    assert str(int_literal) == "5"
+    assert type(str(int_literal)) == str
+
+    assert int_literal.__str__() == "5"
+    assert type(int_literal.__str__()) == builtins.str
 
 
-def untrusted_float_test():
+def float_test():
     base_int = int("A", base=16)
     untrusted_int_1 = UntrustedInt(15)
-    base_float = float(1.5)
-    float_literal = 5.5
+    base_float = float(10.5)
+    float_literal = 10.5
     untrusted_float_1 = UntrustedFloat(10.5)
-    synthesized_float_1 = UntrustedFloat(12.5, synthesized=True)
+    synthesized_float_1 = UntrustedFloat(10.5, synthesized=True)
 
-    untrusted_float_2 = untrusted_float_1 + base_float
-    assert untrusted_float_2 == 12, "untrusted_float_2 should be 12, but it is {}.".format(untrusted_float_2)
-    assert untrusted_float_2.synthesized is False, "untrusted_float_2 should not be synthesized."
-    assert type(untrusted_float_2) == type(untrusted_float_1), "untrusted_float_2 type is not UntrustedFloat"
+    # as_integer_ratio()
+    r_x, r_y = untrusted_float_1.as_integer_ratio()
+    assert r_x == 21
+    assert r_y == 2
+    assert r_x.synthesized is False
+    assert r_y.synthesized is False
+    assert type(r_x) == UntrustedInt
+    assert type(r_y) == UntrustedInt
 
-    untrusted_float_3 = base_float + untrusted_float_1
-    assert untrusted_float_3 == 12, "untrusted_float_3 should be 12, but it is {}.".format(untrusted_float_3)
-    assert untrusted_float_3.synthesized is False, "untrusted_float_3 should not be synthesized."
-    assert type(untrusted_float_3) == type(untrusted_float_1), "untrusted_float_3 type is not UntrustedFloat"
+    r_x, r_y = synthesized_float_1.as_integer_ratio()
+    assert r_x == 21
+    assert r_y == 2
+    assert r_x.synthesized is True
+    assert r_y.synthesized is True
+    assert type(r_x) == UntrustedInt
+    assert type(r_y) == UntrustedInt
 
-    untrusted_float_4 = base_int + untrusted_float_1
-    assert untrusted_float_4 == 20.5, "untrusted_float_4 should be 20.5, but it is {}.".format(untrusted_float_4)
-    assert untrusted_float_4.synthesized is False, "untrusted_float_4 should not be synthesized."
-    assert type(untrusted_float_4) == type(untrusted_float_1), "untrusted_float_4 type is not UntrustedFloat"
+    r_x, r_y = base_float.as_integer_ratio()
+    assert r_x == 21
+    assert r_y == 2
+    assert type(r_x) == int
+    assert type(r_y) == int
 
-    untrusted_float_5 = base_float - untrusted_float_1
-    assert untrusted_float_5 == -9, "untrusted_float_5 should be -9, but it is {}.".format(untrusted_float_5)
-    assert untrusted_float_5.synthesized is False, "untrusted_float_5 should not be synthesized."
-    assert type(untrusted_float_5) == type(untrusted_float_1), "untrusted_float_5 type is not UntrustedFloat"
+    # FIXME: float_literal returns builtins int
+    r_x, r_y = float_literal.as_integer_ratio()
+    assert r_x == 21
+    assert r_y == 2
+    assert type(r_x) == builtins.int
+    assert type(r_y) == builtins.int
 
-    untrusted_float_6 = base_int - untrusted_float_1
-    assert untrusted_float_6 == -0.5, "untrusted_float_6 should be -0.5, but it is {}.".format(untrusted_float_6)
-    assert untrusted_float_6.synthesized is False, "untrusted_float_6 should not be synthesized."
-    assert type(untrusted_float_6) == type(untrusted_float_1), "untrusted_float_6 type is not UntrustedFloat"
+    # conjugate()
+    c = untrusted_float_1.conjugate()
+    assert c == untrusted_float_1
+    assert c.synthesized is False
+    assert type(c) == UntrustedFloat
 
-    untrusted_float_7 = untrusted_int_1 - untrusted_float_1
-    assert untrusted_float_7 == 4.5, "untrusted_float_7 should be 4.5, but it is {}.".format(untrusted_float_7)
-    assert untrusted_float_7.synthesized is False, "untrusted_float_7 should not be synthesized."
-    assert type(untrusted_float_7) == type(untrusted_float_1), "untrusted_float_7 type is not UntrustedFloat"
+    c = synthesized_float_1.conjugate()
+    assert c == synthesized_float_1
+    assert c.synthesized is True
+    assert type(c) == UntrustedFloat
 
-    untrusted_float_8 = untrusted_int_1 + untrusted_float_1 + base_float
-    assert untrusted_float_8 == 27, "untrusted_float_8 should be 27, but it is {}.".format(untrusted_float_8)
-    assert untrusted_float_8.synthesized is False, "untrusted_float_8 should not be synthesized."
-    assert type(untrusted_float_8) == type(untrusted_float_1), "untrusted_float_8 type is not UntrustedFloat"
+    c = base_float.conjugate()
+    assert c == base_float
+    assert type(c) == float
 
-    synthesized_float_2 = float_literal * synthesized_float_1
-    assert synthesized_float_2 == 68.75, "synthesized_float_2 should be 68.75, " \
-                                         "but it is {}.".format(synthesized_float_2)
-    assert synthesized_float_2.synthesized is True, "synthesized_float_2 should be synthesized."
-    assert type(synthesized_float_2) == type(untrusted_float_1), "synthesized_float_2 type is not UntrustedFloat"
+    # FIXME: float_literal returns builtins float
+    c = float_literal.conjugate()
+    assert c == float_literal
+    assert type(c) == builtins.float
 
-    untrusted_float_9 = UntrustedFloat(10)
+    # fromhex()
+    f = float.fromhex('0x1.ffffp10')
+    assert f == 2047.984375
+    assert type(f) == float
+
+    f = float.fromhex(str('0x1.ffffp10'))
+    assert f == 2047.984375
+    assert type(f) == float
+
+    f = float.fromhex(UntrustedStr('0x1.ffffp10'))
+    assert f == 2047.984375
+    assert f.synthesized is False
+    assert type(f) == UntrustedFloat
+
+    f = float.fromhex(UntrustedStr('0x1.ffffp10', synthesized=True))
+    assert f == 2047.984375
+    assert f.synthesized is True
+    assert type(f) == UntrustedFloat
+
+    # hex()
+    s = untrusted_float_1.hex()
+    assert s == '0x1.5000000000000p+3'
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+
+    s = synthesized_float_1.hex()
+    assert s == '0x1.5000000000000p+3'
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    s = base_float.hex()
+    assert s == '0x1.5000000000000p+3'
+    assert type(s) == str
+
+    # FIXME: float_literal returns builtins str
+    s = float_literal.hex()
+    assert s == '0x1.5000000000000p+3'
+    assert type(s) == builtins.str
+
+    # is_integer()
+    assert untrusted_float_1.is_integer() is False
+    assert synthesized_float_1.is_integer() is False
+    assert float_literal.is_integer() is False
+    assert base_float.is_integer() is False
+
+    # __abs__, __add__, __divmod__, __hash__, __mod__, __mul__, __neg__, __pos__, __pow__,
+    # __sub__, __truediv__, __trunc__  and their corresponding reflected (swapped) methods
+    # should behave similarly as int. We just test + (__add__) for simplicity.
+    i = untrusted_float_1 + base_float
+    assert i == 21
+    assert i.synthesized is False
+    assert type(i) == UntrustedFloat
+
+    i = base_float + untrusted_float_1
+    assert i == 21
+    assert i.synthesized is False
+    assert type(i) == UntrustedFloat
+
+    i = base_int + untrusted_float_1
+    assert i == 20.5
+    assert i.synthesized is False
+    assert type(i) == UntrustedFloat
+
+    i = base_float + float_literal
+    assert i == 21
+    assert type(i) == float
+
+    i = float_literal + base_float
+    assert i == 21
+    assert type(i) == float
+
+    i = float_literal + synthesized_float_1
+    assert i == 21
+    assert i.synthesized is True
+    assert type(i) == UntrustedFloat
+
+    # FIXME: int_literal works only with reflected methods (above), not with directly calling special method (below)
+    i = float_literal.__add__(synthesized_float_1)
+    assert i == 21
+    assert type(i) == builtins.float
+
+    # TODO: __bool__ always returns bool
+
+    # __eq__, __ge__, __gt__, etc. should behave similarly as int.
+
+    # float() (__float__)
     try:
-        int_1 = int(untrusted_float_9)
+        float(synthesized_float_1)
+    except TypeError as e:
+        print("10.5 is synthesized, converting it to float using float() results in "
+              "TypeError: {error}".format(error=e))
+    assert synthesized_float_1.to_trusted(forced=True) == 10.5
+    assert type(float(synthesized_float_1.to_trusted(forced=True))) == float
+
+    try:
+        synthesized_float_1.__float__()
+    except TypeError as e:
+        print("10.5 is synthesized, converting it to float using __float__ results in "
+              "TypeError: {error}".format(error=e))
+    assert synthesized_float_1.to_trusted(forced=True) == 10.5
+    assert type(synthesized_float_1.to_trusted(forced=True).__float__()) == float
+
+    assert float(base_float) == 10.5
+    assert type(float(base_float)) == float
+
+    assert base_float.__float__() == 10.5
+    assert type(base_float.__float__()) == float
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast float() to type float. When the calling object
+    #  is an int literal, there is no interposition from our framework,
+    #  but because the built-in float is shadowed by our own float, Python
+    #  ensures return value to be our float. However, the same enforcement
+    #  does not apply when __float__ is called directly from an int literal
+    assert float(float_literal) == 10.5
+    assert type(float(float_literal)) == float
+
+    assert float_literal.__float__() == 10.5
+    assert type(float_literal.__float__()) == builtins.float
+
+    # format() (__format__), str() (__str__), repr(__repr__) behave similarly
+    try:
+        "{}".format(untrusted_float_1)
+    except TypeError as e:
+        print("10.5 is untrusted, converting it to str using format() results in "
+              "TypeError: {error}".format(error=e))
+    s = untrusted_float_1.to_trusted()
+    assert type(format(s)) == str
+
+    try:
+        "{}".format(synthesized_float_1)
+    except TypeError as e:
+        print("10.5 is untrusted, converting it to str using format() results in "
+              "TypeError: {error}".format(error=e))
+    s = synthesized_float_1.to_trusted(forced=True)
+    assert type(format(s)) == str
+
+    s = format(base_float)
+    assert type(s) == str
+
+    # FIXME: float_literal format() returns builtins str
+    s = format(float_literal)
+    assert type(s) == builtins.str
+
+    # int() __int__
+    try:
+        int(untrusted_float_1)
     except TypeError as e:
         print("10.0 is untrusted, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
-    assert int(untrusted_float_9.to_trusted()) == 10, "untrusted_float_9 should be explicitly converted to 10, " \
-                                                      "but it is not."
-    assert type(int(untrusted_float_9.to_trusted())) == int, "explicitly converted untrusted_float_9 is not int"
+    assert int(untrusted_float_1.to_trusted()) == 10
+    assert type(int(untrusted_float_1.to_trusted())) == int
 
-    synthesized_float_3 = UntrustedFloat(10, synthesized=True)
     try:
-        converted_int_2 = int(synthesized_float_3)
+        int(synthesized_float_1)
     except TypeError as e:
         print("10.0 is synthesized, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
+    assert int(synthesized_float_1.to_trusted(forced=True)) == 10
+    assert type(int(synthesized_float_1.to_trusted(forced=True))) == int
 
+    assert int(base_float) == 10
+    assert type(int(base_float)) == int
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast int() to type int. When the calling object
+    #  is an int literal, there is no interposition from our framework,
+    #  but because the built-in int is shadowed by our own int, Python
+    #  ensures return value to be our int. However, the same enforcement
+    #  does not apply when __int__ is called directly from an int literal
+    assert int(float_literal) == 10
+    assert type(int(float_literal)) == int
+
+    assert float_literal.__int__() == 10
+    assert type(float_literal.__int__()) == builtins.int
+
+
+def str_test():
+    base_str = str("Hello")
+    str_literal = "World"
+    untrusted_str = UntrustedStr("untrusted")
+    synthesized_str = UntrustedStr("synthesized", synthesized=True)
+
+    # capitalize()
+    s = base_str.capitalize()
+    assert s == "Hello"
+    assert type(s) == str
+    s = untrusted_str.capitalize()
+    assert s == "Untrusted"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.capitalize()
+    assert s == "Synthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.capitalize()
+    assert s == "World"
+    assert type(s) == builtins.str
+
+    # casefold()
+    s = base_str.casefold()
+    assert s == "hello"
+    assert type(s) == str
+    s = untrusted_str.casefold()
+    assert s == "untrusted"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.casefold()
+    assert s == "synthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.casefold()
+    assert s == "world"
+    assert type(s) == builtins.str
+
+    # center()
+    s = base_str.center(10, "x")
+    assert s == "xxHelloxxx"
+    assert type(s) == str
+    s = untrusted_str.center(11, "x")
+    assert s == "xuntrustedx"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.center(13)
+    assert s == " synthesized "
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.center(9)
+    assert s == "  World  "
+    assert type(s) == builtins.str
+
+    # count()
+    c = base_str.count("e")
+    assert c == 1
+    assert type(c) == int
+    c = base_str.count("e", UntrustedInt(0))
+    assert c == 1
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = base_str.count(UntrustedStr("e", synthesized=True))
+    assert c == 1
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = untrusted_str.count("u")
+    assert c == 2
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = untrusted_str.count("u", UntrustedInt(0, synthesized=True))
+    assert c == 2
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = synthesized_str.count("s")
+    assert c == 2
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    # FIXME: str_literal returns builtins str
+    c = str_literal.count(UntrustedStr("d"))
+    assert c == 1
+    assert type(s) == builtins.str
+
+    # encode()
+    b = base_str.encode()
+    assert type(b) == bytes
+
+    b = untrusted_str.encode()
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is False
+
+    b = synthesized_str.encode()
+    assert type(b) == UntrustedBytes
+    assert b.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    b = str_literal.encode()
+    assert type(b) == builtins.bytes
+
+    # endswith()
+    b = base_str.endswith("o")
+    assert b is True
+    b = base_str.endswith(UntrustedStr("o"))
+    assert b is True
+    # Note: bool values remain bool. Skip testing other methods that return bool
+    # isalnum(), isalpha(), isascii(), isdecimal(), isdigit(), isidentifier(),
+    # islower(), isnumeric(), isprintable(), isspace(), istitle(), isupper(), startswith(),
+    # __eq__, __ge__, __gt__, __le__, __lt__, __ne__, __contains__
+
+    # expandtabs()
+    s = base_str.expandtabs()
+    assert s == "Hello"
+    assert type(s) == str
+    s = untrusted_str.expandtabs()
+    assert s == "untrusted"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.expandtabs()
+    assert s == "synthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.expandtabs()
+    assert s == "World"
+    assert type(s) == builtins.str
+
+    # find()
+    c = base_str.find("e")
+    assert c == 1
+    assert type(c) == int
+    c = base_str.find("e", UntrustedInt(0))
+    assert c == 1
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = base_str.find(UntrustedStr("e", synthesized=True))
+    assert c == 1
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = untrusted_str.find("u")
+    assert c == 0
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = untrusted_str.find("u", UntrustedInt(0, synthesized=True))
+    assert c == 0
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = synthesized_str.find("s")
+    assert c == 0
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    # FIXME: str_literal returns builtins str
+    c = str_literal.find(UntrustedStr("d"))
+    assert c == 4
+    assert type(s) == builtins.str
+
+    # format()
     try:
-        converted_float_1 = float(synthesized_float_2)
+        str("Hello {place}").format(place=UntrustedStr("world"))
     except TypeError as e:
-        print("68.75 is synthesized, converting it to float using float() results in "
+        print("'Hello world' is untrusted, formatting it using format() results in "
+              "TypeError: {error}".format(error=e))
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Although string literal is the calling object, when the string to be
+    #  formatted is untrusted, Splice returns TypeError. This is because the
+    #  untrusted string also calls __format__, at which point intercepted by
+    #  Splice. However, if the string can be returned (e.g., because the
+    #  formatted str is trust-aware), the return str will be of built-in type.
+    #  This applies to format_map() as well.
+    s_literal = "Hello {place}"
+    s = s_literal.format(place=str("world"))
+    assert s == "Hello world"
+    assert type(s) == builtins.str
+    try:
+        s_literal.format(place=UntrustedStr("world", synthesized=True))
+    except TypeError as e:
+        print("'world' is synthesized, formatting it using format() results in "
               "TypeError: {error}".format(error=e))
 
+    # format_map()
+    m = {"place": "World", "place2": UntrustedStr("Untrusted World")}
+    s_literal = "Hello {place}; Hi {place2}"
     try:
-        converted_float_2 = float(untrusted_float_7)
+        s_literal.format(**m)
     except TypeError as e:
-        print("4.5 is untrusted, converting it to float using float() results in "
+        print("'Untrusted World' is untrusted, formatting it using format() results in "
               "TypeError: {error}".format(error=e))
-    assert untrusted_float_7.to_trusted() == 4.5, "untrusted_float_7 should be explicitly converted to 4.5, " \
-                                                  "but it is not."
-    assert type(untrusted_float_7.to_trusted()) == float, "explicitly converted untrusted_float_7 type is not float"
+    m = {"place": "World", "place2": str("Untrusted World")}
+    s = s_literal.format(**m)
+    assert s == "Hello World; Hi Untrusted World"
+    assert type(s) == builtins.str
 
+    # index()
+    c = base_str.index("e")
+    assert c == 1
+    assert type(c) == int
+    c = base_str.index("e", UntrustedInt(0))
+    assert c == 1
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = base_str.index(UntrustedStr("e", synthesized=True))
+    assert c == 1
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = untrusted_str.index("u")
+    assert c == 0
+    assert c.synthesized is False
+    assert type(c) == UntrustedInt
+    c = untrusted_str.index("u", UntrustedInt(0, synthesized=True))
+    assert c == 0
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    c = synthesized_str.index("s")
+    assert c == 0
+    assert c.synthesized is True
+    assert type(c) == UntrustedInt
+    # FIXME: str_literal returns builtins str
+    c = str_literal.index(UntrustedStr("d"))
+    assert c == 4
+    assert type(s) == builtins.str
+
+    # join()
+    base_s = str(".")
+    s = base_s.join(["Hello", "world"])
+    assert s == "Hello.world"
+    assert type(s) == str
+
+    s = base_s.join(["Hello", UntrustedStr("world")])
+    assert s.to_trusted() == "Hello.world"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+
+    s = base_s.join(["Hello", UntrustedStr("world", synthesized=True)])
+    assert s.to_trusted(forced=True) == "Hello.world"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    untrusted_s = UntrustedStr(".")
+    s = untrusted_s.join(["Hello", UntrustedStr("world", synthesized=True)])
+    assert s.to_trusted(forced=True) == "Hello.world"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    synthesized_s = UntrustedStr(".", synthesized=True)
+    s = synthesized_s.join(["Hello", "world"])
+    assert s.to_trusted(forced=True) == "Hello.world"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    s_literal = "."
+    s = s_literal.join([str("Hello"), "world"])
+    assert s == "Hello.world"
+    assert type(s) == builtins.str
+
+    # FIXME: str_literal returns builtins str
+    s_literal = "."
+    s = s_literal.join([UntrustedStr("Hello"), "world"])
+    assert s == "Hello.world"
+    assert type(s) == builtins.str
+
+    # ljust()
+    s = base_str.ljust(10)
+    assert type(s) == str
+    s = base_str.ljust(UntrustedInt(10))
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = base_str.ljust(UntrustedInt(10, synthesized=True))
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    s = untrusted_str.ljust(UntrustedInt(10, synthesized=True))
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    s = synthesized_str.ljust(13)
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.ljust(UntrustedInt(9))
+    assert type(s) == builtins.str
+
+    # lower()
+    s = base_str.lower()
+    assert s == "hello"
+    assert type(s) == str
+    s = untrusted_str.lower()
+    assert s == "untrusted"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.lower()
+    assert s == "synthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.lower()
+    assert s == "world"
+    assert type(s) == builtins.str
+
+    # lstrip() (skip strip() as they are similar)
+    s = base_str.lstrip()
+    assert s == "Hello"
+    assert type(s) == str
+    s = base_str.lstrip(UntrustedStr("H"))
+    assert s == "ello"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = untrusted_str.lstrip()
+    assert s == "untrusted"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = untrusted_str.lstrip(UntrustedStr("d", synthesized=True))
+    assert s == "untrusted"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    s = synthesized_str.lstrip()
+    assert s == "synthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.lstrip()
+    assert s == "World"
+    assert type(s) == builtins.str
+    s = str_literal.lstrip(UntrustedStr("W", synthesized=True))
+    assert s == "orld"
+    assert type(s) == builtins.str
+
+    # partition()
+    s_front, s_sep, s_back = base_str.partition("e")
+    assert type(s_front) == str
+    assert type(s_sep) == str
+    assert type(s_back) == str
+
+    s_front, s_sep, s_back = base_str.partition(UntrustedStr("e"))
+    assert type(s_front) == UntrustedStr
+    assert s_front.synthesized is False
+    assert type(s_sep) == UntrustedStr
+    assert s_sep.synthesized is False
+    assert type(s_back) == UntrustedStr
+    assert s_back.synthesized is False
+
+    s_front, s_sep, s_back = base_str.partition(UntrustedStr("e", synthesized=True))
+    assert type(s_front) == UntrustedStr
+    assert s_front.synthesized is True
+    assert type(s_sep) == UntrustedStr
+    assert s_sep.synthesized is True
+    assert type(s_back) == UntrustedStr
+    assert s_back.synthesized is True
+
+    s_front, s_sep, s_back = untrusted_str.partition("u")
+    assert type(s_front) == UntrustedStr
+    assert s_front.synthesized is False
+    assert type(s_sep) == UntrustedStr
+    assert s_sep.synthesized is False
+    assert type(s_back) == UntrustedStr
+    assert s_back.synthesized is False
+
+    # FIXME: str_literal returns builtins str
+    s_front, s_sep, s_back = str_literal.partition(UntrustedStr("e", synthesized=True))
+    assert type(s_front) == builtins.str
+    assert type(s_sep) == builtins.str
+    assert type(s_back) == builtins.str
+
+    # replace()
+    s = base_str.replace("e", "a")
+    assert s == "Hallo"
+    assert type(s) == str
+    s = base_str.replace("e", UntrustedStr("a"))
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+    s = base_str.replace(UntrustedStr("e"), "a")
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = untrusted_str.replace("n", "-")
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+    s = untrusted_str.replace("n", UntrustedStr("-", synthesized=True))
+    assert type(s) == UntrustedStr
+    assert s.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    s = str_literal.replace("d", str("t"))
+    assert s == "Worlt"
+    assert type(s) == builtins.str
+    s = str_literal.replace("d", UntrustedStr("t"))
+    assert s == "Worlt"
+    assert type(s) == builtins.str
+
+    # Reversed methods are the same as the non-reversed one, skip testing:
+    # rfind(), rindex(), rjust(), rpartition(), rsplit(), rstrip(),
+
+    # split() (skip splitlines() as they are similar)
+    l = base_str.split("e")
+    for e in l:
+        assert type(e) == str
+    l = base_str.split(UntrustedStr("e"))
+    for e in l:
+        assert type(e) == UntrustedStr
+        assert e.synthesized is False
+    l = untrusted_str.split(UntrustedStr("s", synthesized=True))
+    for e in l:
+        assert type(e) == UntrustedStr
+        assert e.synthesized is True
+    # FIXME: str_literal returns builtins str
+    l = str_literal.split(UntrustedStr("l", synthesized=True))
+    for e in l:
+        assert type(e) == builtins.str
+
+    # swapcase() (skip title() and upper(), as they are similar)
+    s = base_str.swapcase()
+    assert s == "hELLO"
+    assert type(s) == str
+    s = untrusted_str.swapcase()
+    assert s == "UNTRUSTED"
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+    s = synthesized_str.swapcase()
+    assert s == "SYNTHESIZED"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+    # FIXME: str_literal returns builtins str
+    s = str_literal.swapcase()
+    assert s == "wORLD"
+    assert type(s) == builtins.str
+
+    # TODO: test translate() and maketrans() together
+
+    # zfill()
+    s = str("123")
+    s = s.zfill(5)
+    assert s == "00123"
+    assert type(s) == str
+
+    s = str("123")
+    s = s.zfill(UntrustedInt(5))
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = UntrustedStr("123")
+    s = s.zfill(5)
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = UntrustedStr("123")
+    s = s.zfill(UntrustedInt(5, synthesized=True))
+    assert type(s) == UntrustedStr
+    assert s.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    s = "123"
+    s = s.zfill(UntrustedInt(5, synthesized=True))
+    assert type(s) == builtins.str
+
+    # __add__
+    s = untrusted_str + base_str
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = base_str + untrusted_str
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = base_str + synthesized_str
+    assert type(s) == UntrustedStr
+    assert s.synthesized is True
+
+    s = base_str + " world"
+    assert s == "Hello world"
+    assert type(s) == str
+
+    s = untrusted_str + str_literal
+    assert s.synthesized is False
+    assert type(s) == UntrustedStr
+
+    s = synthesized_str + base_str
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    s = synthesized_str + str_literal
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    # FIXME: IMPORTANT NOTE ======================================================
+    #  We define __radd__ in the untrusted and trust-aware str classes, so that
+    #  the reflected method would be called when a str literal is the left operand.
+    #  However, this works only with reflected methods, not with directly calling
+    #  special method.
+    s = str_literal + base_str
+    assert s == "WorldHello"
+    assert type(s) == str
+
+    s = str_literal.__add__(base_str)
+    assert s == "WorldHello"
+    assert type(s) == builtins.str
+
+    s = str_literal + synthesized_str
+    assert s.to_trusted(forced=True) == "Worldsynthesized"
+    assert s.synthesized is True
+    assert type(s) == UntrustedStr
+
+    s = str_literal.__add__(synthesized_str)
+    assert s == "Worldsynthesized"
+    assert type(s) == builtins.str
+
+    h = hash(base_str)
+    assert type(h) == int
+    h = hash(untrusted_str)
+    assert type(h) == UntrustedInt
+    assert h.synthesized is False
+    h = hash(synthesized_str)
+    assert type(h) == UntrustedInt
+    assert h.synthesized is True
+    # FIXME: str_literal returns builtins str
+    h = hash(str_literal)
+    assert type(h) == builtins.int
+
+    # __iter__
+    # IMPORTANT NOTE: We define __iter__ in the untrusted and trust-aware str classes
+    for s in base_str:
+        assert type(s) == str
+    for s in untrusted_str:
+        assert type(s) == UntrustedStr
+        assert s.synthesized is False
+    for s in synthesized_str:
+        assert type(s) == UntrustedStr
+        assert s.synthesized is True
+    # FIXME: str_literal returns builtins str
+    for s in str_literal:
+        assert type(s) == builtins.str
+
+    # __len__
+    l = len(base_str)
+    assert l == 5
+    assert type(l) == int
+
+    l = len(untrusted_str)
+    assert l == 9
+    assert type(l) == UntrustedInt
+    assert l.synthesized is False
+
+    l = len(synthesized_str)
+    assert l == 11
+    assert type(l) == UntrustedInt
+    assert l.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    l = len(str_literal)
+    assert l == 5
+    assert type(l) == builtins.int
+
+    # TODO: __mod__ is not tested
+
+    # * (__mul__, __rmul__)
+    s = base_str * 5
+    assert type(s) == str
+
+    s = base_str * UntrustedInt(5)
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = base_str * UntrustedInt(5, synthesized=True)
+    assert type(s) == UntrustedStr
+    assert s.synthesized is True
+
+    s = untrusted_str * 5
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    s = synthesized_str * 5
+    assert type(s) == UntrustedStr
+    assert s.synthesized is True
+
+    # FIXME: str_literal returns builtins str,
+    #  even through __mul__ has a reflected method __rmul__,
+    #  because __rmul__ is for a different use! For
+    #  str multiplication, str must be either untrusted
+    #  or trust-aware to propagate untrustiness.
+    s = str_literal * 5
+    assert type(s) == builtins.str
+
+    s = str_literal * UntrustedInt(5)
+    assert type(s) == builtins.str
+
+    s = UntrustedInt(5) * str_literal
+    assert type(s) == builtins.str
+
+    # __sizeof__
+    l = base_str.__sizeof__()
+    assert type(l) == int
+
+    l = untrusted_str.__sizeof__()
+    assert type(l) == UntrustedInt
+    assert l.synthesized is False
+
+    l = synthesized_str.__sizeof__()
+    assert type(l) == UntrustedInt
+    assert l.synthesized is True
+
+    # FIXME: str_literal returns builtins int
+    l = str_literal.__sizeof__()
+    assert type(l) == builtins.int
+
+    # int() (Note that string object per se does not have __int__)
+    s = UntrustedStr("10")
     try:
-        converted_str_1 = str(untrusted_float_7)
+        int(s)
     except TypeError as e:
-        print("4.5 is untrusted, converting it to str using str() results in "
+        print("'10' is untrusted, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
-    assert str(untrusted_float_7.to_trusted()) == '4.5', "explicitly converted untrusted_float_7 should be '4.5', " \
-                                                         "but it is not."
-    assert type(str(untrusted_float_7.to_trusted())) == str, "explicitly converted untrusted_float_7 is not str"
+    assert int(s.to_trusted()) == 10
+    assert type(int(s.to_trusted())) == int
 
+    s = UntrustedStr("10", synthesized=True)
     try:
-        converted_str_2 = str(synthesized_float_2)
+        int(s)
     except TypeError as e:
-        print("68.75 is synthesized, converting it to str using str() results in "
+        print("'10' is synthesized, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
+    assert int(s.to_trusted(forced=True)) == 10
+    assert type(int(s.to_trusted(forced=True))) == int
+
+    # FIXME: IMPORTANT NOTE ===============================================
+    #  Python always cast int() to type int. When the calling object
+    #  is an str literal, there is no interposition from our framework,
+    #  but because the built-in int is shadowed by our own int, Python
+    #  ensures return value to be our int.
+    assert type(int(str("10"))) == int
+    assert type(int("10")) == int
+
+    # float() is similar to int()
+
+    # str()
     try:
-        converted_float_3 = synthesized_float_2.to_trusted()
-    except RuntimeError as e:
-        print("68.75 is synthesized, converting it to float using to_trusted() without force results in "
-              "RuntimeError: {error}".format(error=e))
-    assert type(synthesized_float_2.to_trusted(forced=True)) == float, "explicitly converted " \
-                                                                       "synthesized_float_2 is not float"
+        str(untrusted_str)
+    except TypeError as e:
+        print("'Untrusted World!' is untrusted, converting it to str using str() results in "
+              "TypeError: {error}".format(error=e))
+    assert untrusted_str.to_trusted() == 'untrusted'
+    assert type(untrusted_str.to_trusted()) == str
+    assert type(str(str_literal)) == str
 
 
-def untrusted_decimal_test():
+def bytearray_test():
+    b = bytearray([110, 115, 120, 125, 130])
+    untrusted_b = UntrustedBytearray(b)
+    assert type(untrusted_b) == UntrustedBytearray
+    assert b == untrusted_b
+    # Constructing a trust-aware bytearray with untrusted values returns an untrusted bytearray
+    # untrusted_b = bytearray([UntrustedInt(110), 111, 112, UntrustedInt(113, synthesized=True), 114])
+
+    # append()
+    b.append(135)
+    assert type(b) == bytearray
+    b.append(UntrustedInt(135))
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is False
+    b = bytearray([110, 115, 120, 125, 130])
+    b.append(UntrustedInt(135, synthesized=True))
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+
+    # capitalize()
+    b = bytearray([110, 115, 120, 125, 130])
+    b = b.capitalize()
+    assert type(b) == bytearray
+    untrusted_b = untrusted_b.capitalize()
+    assert type(untrusted_b) == UntrustedBytearray
+
+    # center()
+    c = b.center(10)
+    assert type(c) == bytearray
+    c = b.center(UntrustedInt(10, synthesized=True))
+    assert type(c) == UntrustedBytearray
+    assert c.synthesized is True
+
+    # clear()
+    b.clear()
+    assert type(b) == bytearray
+    untrusted_b.clear()
+    assert type(untrusted_b) == UntrustedBytearray
+
+    # copy()
+    b = bytearray([110, 115, 120, 125, 130])
+    untrusted_b = UntrustedBytearray(b)
+    c = b.copy()
+    assert type(c) == bytearray
+    c = untrusted_b.copy()
+    assert type(c) == UntrustedBytearray
+    assert c.synthesized is False
+
+    # count()
+    c = b.count(110)
+    assert type(c) == int
+    c = untrusted_b.count(115)
+    assert type(c) == UntrustedInt
+    c = b.count(UntrustedInt(100))
+    assert type(c) == UntrustedInt
+    assert c.synthesized is False
+
+    # decode()
+    b = bytearray([110, 111, 112, 113, 114])
+    s = b.decode("ascii")
+    assert type(s) == str
+    untrusted_b = UntrustedBytearray(b)
+    s = untrusted_b.decode("ascii")
+    assert type(s) == UntrustedStr
+    assert s.synthesized is False
+
+    # We skip testing methods that are identical to those in str:
+    # expandtabs(), find(), index(), join(), ljust(), lower(), lstrip(), maketrans(), partition(),
+    # We also skip testing methods that return a boolean value:
+    # endswith(), isalnum(), isalpha(), isascii(), isdigit(), islower(), isspace(), istitle(), isupper()
+
+    # extend()
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b)
+    b.extend(untrusted_b)
+    assert type(b) == UntrustedBytearray
+
+    # fromhex()
+    b = bytearray.fromhex('B9 01EF')
+    assert type(b) == bytearray
+    b = UntrustedBytearray.fromhex('B9 01EF')
+    assert type(b) == UntrustedBytearray
+    b = bytearray.fromhex(UntrustedStr('B9 01EF', synthesized=True))
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+
+    # hex()
+    b = bytearray([0xb9, 0x01, 0xef])
+    h = b.hex()
+    assert type(h) == str
+    b = UntrustedBytearray([0xb9, 0x01, 0xef])
+    h = b.hex()
+    assert type(h) == UntrustedStr
+    assert b.synthesized is False
+
+    # insert()
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b)
+    b.insert(2, 113)
+    assert type(b) == bytearray
+    b.insert(3, UntrustedInt(113))
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is False
+    b.insert(3, UntrustedInt(113, synthesized=True))
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+    untrusted_b.insert(0, UntrustedInt(110, synthesized=True))
+    assert type(untrusted_b) == UntrustedBytearray
+    assert untrusted_b.synthesized is True
+
+    # Only test some other methods that are likely to behave differently than the existing ones already tested.
+    # pop()
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b, synthesized=True)
+    e = b.pop(3)
+    assert type(e) == int
+    e = untrusted_b.pop(3)
+    assert type(e) == UntrustedInt
+    assert e.synthesized is True
+
+    # __getitem__
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b, synthesized=True)
+    assert type(b[3]) == int
+    assert type(untrusted_b[3]) == UntrustedInt
+    assert untrusted_b[3].synthesized is True
+
+    # __iadd__
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b, synthesized=True)
+    b += untrusted_b
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+
+    # __iter__
+    b = bytearray([110, 111, 112, 113, 114])
+    for i in b:
+        assert type(i) == int
+    untrusted_b = UntrustedBytearray(b, synthesized=True)
+    for i in untrusted_b:
+        assert type(i) == UntrustedInt
+        assert i.synthesized is True
+
+    # __len__
+    b = bytearray([110, 111, 112, 113, 114])
+    assert len(b) == 5
+    assert type(len(b)) == int
+    untrusted_b = UntrustedBytearray(b, synthesized=True)
+    assert len(untrusted_b) == 5
+    assert type(len(untrusted_b)) == UntrustedInt
+
+    # __setitem__
+    b = bytearray([110, 111, 112, 113, 114])
+    untrusted_b = UntrustedBytearray(b)
+    b[3] = UntrustedInt(113, synthesized=True)
+    assert type(b) == UntrustedBytearray
+    assert b.synthesized is True
+
+
+# TODO: not thoroughly tested
+def decimal_test():
     base_decimal = Decimal('3.14')
     # Make sure UntrustedDecimal can take all forms acceptable by Decimal
     untrusted_decimal_1 = UntrustedDecimal('3.14')  # string input
     untrusted_decimal_2 = UntrustedDecimal((0, (3, 1, 4), -2))  # tuple (sign, digit_tuple, exponent)
-    assert untrusted_decimal_2 == Decimal((0, (3, 1, 4), -2)), "untrusted_decimal_2 should be 3.14, " \
-                                                               "but it is {}".format(untrusted_decimal_2)
-    assert type(untrusted_decimal_2) is UntrustedDecimal, "untrusted_decimal_2 type is not UntrustedDecimal"
+    assert untrusted_decimal_2 == Decimal((0, (3, 1, 4), -2))
+    assert type(untrusted_decimal_2) is UntrustedDecimal
     untrusted_decimal_3 = UntrustedDecimal(Decimal(314))  # another decimal instance
-    assert untrusted_decimal_3 == Decimal(Decimal(314)), "untrusted_decimal_3 should be 314, " \
-                                                         "but it is {}".format(untrusted_decimal_3)
-    assert type(untrusted_decimal_3) is UntrustedDecimal, "untrusted_decimal_3 type is not UntrustedDecimal"
+    assert untrusted_decimal_3 == Decimal(Decimal(314))
+    assert type(untrusted_decimal_3) is UntrustedDecimal
     untrusted_decimal_4 = UntrustedDecimal('  3.14 \n')  # leading and trailing whitespace is okay
-    assert untrusted_decimal_4 == Decimal('  3.14 \n'), "untrusted_decimal_4 should be 3.14, " \
-                                                        "but it is {}".format(untrusted_decimal_4)
-    assert type(untrusted_decimal_4) is UntrustedDecimal, "untrusted_decimal_4 type is not UntrustedDecimal"
+    assert untrusted_decimal_4 == Decimal('  3.14 \n')
+    assert type(untrusted_decimal_4) is UntrustedDecimal
     untrusted_decimal_5 = UntrustedDecimal(314)  # int
-    assert untrusted_decimal_5 == Decimal(314), "untrusted_decimal_5 should be 314, " \
-                                                "but it is {}".format(untrusted_decimal_5)
-    assert type(untrusted_decimal_5) is UntrustedDecimal, "untrusted_decimal_5 type is not UntrustedDecimal"
+    assert untrusted_decimal_5 == Decimal(314)
+    assert type(untrusted_decimal_5) is UntrustedDecimal
     synthesized_decimal_1 = UntrustedDecimal('3.14', synthesized=True)
 
-    untrusted_decimal_6 = base_decimal + untrusted_decimal_1
-    assert untrusted_decimal_6 == base_decimal + base_decimal, "untrusted_decimal_6 should be 6.28, " \
-                                                               "but it is {}.".format(untrusted_decimal_6)
-    assert untrusted_decimal_6.synthesized is False, "untrusted_decimal_6 should not be synthesized."
-    assert type(untrusted_decimal_6) == type(untrusted_decimal_1), "untrusted_decimal_6 type is not UntrustedDecimal"
+    d = base_decimal + untrusted_decimal_1
+    assert d == base_decimal + base_decimal
+    assert type(d) == UntrustedDecimal
+    assert d.synthesized is False
 
-    untrusted_decimal_7 = base_decimal * untrusted_decimal_1
-    assert untrusted_decimal_7 == base_decimal * base_decimal, "untrusted_decimal_7 should be 9.8596, " \
-                                                               "but it is {}.".format(untrusted_decimal_6)
-    assert untrusted_decimal_7.synthesized is False, "untrusted_decimal_7 should not be synthesized."
-    assert type(untrusted_decimal_7) == type(untrusted_decimal_1), "untrusted_decimal_7 type is not UntrustedDecimal"
+    d = base_decimal * untrusted_decimal_1
+    assert d == base_decimal * base_decimal
+    assert type(d) == UntrustedDecimal
+    assert d.synthesized is False
 
-    synthesized_decimal_2 = base_decimal * synthesized_decimal_1
-    assert synthesized_decimal_2 == base_decimal * base_decimal, "synthesized_decimal_2 should be 9.8596, " \
-                                                                 "but it is {}.".format(untrusted_decimal_6)
-    assert synthesized_decimal_2.synthesized is True, "synthesized_decimal_2 should be synthesized."
-    assert type(synthesized_decimal_2) == type(untrusted_decimal_1), \
-        "synthesized_decimal_2 type is not UntrustedDecimal"
+    d = base_decimal * synthesized_decimal_1
+    assert d == base_decimal * base_decimal
+    assert type(d) == UntrustedDecimal
+    assert d.synthesized is True
 
-    untrusted_decimal_8 = UntrustedDecimal(10)
+    d = UntrustedDecimal(10)
     try:
-        converted_int_1 = int(untrusted_decimal_8)
+        int(d)
     except TypeError as e:
         print("10 is untrusted, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
-    assert untrusted_decimal_8.to_trusted() == 10, "explicitly converted untrusted_decimal_8 should be 10, " \
-                                                   "but it is not."
+    assert d.to_trusted() == 10
 
-    synthesized_decimal_3 = UntrustedDecimal(10, synthesized=True)
+    d = UntrustedDecimal(10, synthesized=True)
     try:
-        converted_int_2 = int(synthesized_decimal_3)
+        int(d)
     except TypeError as e:
         print("10 is synthesized, converting it to int using int() results in "
               "TypeError: {error}".format(error=e))
 
     try:
-        converted_float_1 = float(synthesized_decimal_1)
+        float(synthesized_decimal_1)
     except TypeError as e:
         print("3.14 is synthesized, converting it to float using float() results in "
               "TypeError: {error}".format(error=e))
 
+    d = UntrustedDecimal(9.8596, synthesized=True)
     try:
-        converted_float_2 = float(untrusted_decimal_7)
+        float(d)
     except TypeError as e:
         print("9.8596 is untrusted, converting it to float using float() results in "
               "TypeError: {error}".format(error=e))
-    assert untrusted_decimal_7.to_trusted() == untrusted_decimal_7, "explicitly converted untrusted_decimal_7 " \
-                                                                    "should be equal to untrusted_decimal_7 " \
-                                                                    "but it is not."
-    assert type(float(untrusted_decimal_7.to_trusted())) == float, "explicitly converted untrusted_decimal_7 " \
-                                                                   "is not float"
+    assert d.to_trusted(forced=True) == d
+    assert type(float(d.to_trusted(forced=True))) == float
 
     try:
-        converted_str_1 = str(untrusted_decimal_7)
+        str(d)
     except TypeError as e:
         print("9.8596 is untrusted, converting it to str using str() results in "
               "TypeError: {error}".format(error=e))
 
     try:
-        converted_str_2 = str(synthesized_decimal_1)
+        str(synthesized_decimal_1)
     except TypeError as e:
         print("3.14 is synthesized, converting it to str using str() results in "
               "error: {error}".format(error=e))
 
 
-def untrusted_str_test():
-    base_str = str("Hello ")
-    str_literal = "World!"
-    untrusted_str = UntrustedStr("Untrusted World!")
-    synthesized_str = UntrustedStr("Fake World!", synthesized=True)
-    # Some expected test cases
-    untrusted_str_1 = untrusted_str + base_str
-    assert untrusted_str_1 == "Untrusted World!Hello ", "untrusted_str_1 should be 'Untrusted World!Hello'," \
-                                                        " but it is {}.".format(untrusted_str_1)
-    assert untrusted_str_1.synthesized is False, "untrusted_str_1 should not be synthesized."
-    assert type(untrusted_str_1) == type(untrusted_str), "untrusted_str_1 type is not UntrustedStr"
-
-    untrusted_str_2 = untrusted_str + str_literal
-    assert untrusted_str_2 == "Untrusted World!World!", "untrusted_str_2 should be 'Untrusted World!World!'," \
-                                                        " but it is {}.".format(untrusted_str_2)
-    assert untrusted_str_2.synthesized is False, "untrusted_str_2 should not be synthesized."
-    assert type(untrusted_str_2) == type(untrusted_str), "untrusted_str_2 type is not UntrustedStr"
-
-    synthesized_str_1 = synthesized_str + base_str
-    assert synthesized_str_1 == "Fake World!Hello ", "synthesized_str_1 should be 'Fake World!Hello'," \
-                                                     " but it is {}.".format(synthesized_str_1)
-    assert synthesized_str_1.synthesized is True, "synthesized_str_1 should be synthesized."
-    assert type(synthesized_str_1) == type(untrusted_str), "synthesized_str_1 type is not UntrustedStr"
-
-    synthesized_str_2 = synthesized_str + str_literal
-    assert synthesized_str_2 == "Fake World!World!", "synthesized_str_2 should be 'Fake World!World!'," \
-                                                     " but it is {}.".format(synthesized_str_2)
-    assert synthesized_str_2.synthesized is True, "synthesized_str_2 should be synthesized."
-    assert type(synthesized_str_2) == type(untrusted_str), "synthesized_str_2 type is not UntrustedStr"
-
-    untrusted_str_3 = base_str + untrusted_str
-    assert untrusted_str_3 == "Hello Untrusted World!", "untrusted_str_3 should be 'Hello Untrusted World!'," \
-                                                        " but it is {}.".format(untrusted_str_3)
-    assert untrusted_str_3.synthesized is False, "untrusted_str_3 should not be synthesized."
-    assert type(untrusted_str_3) == type(untrusted_str), "untrusted_str_3 type is not UntrustedStr"
-
-    synthesized_str_3 = base_str + synthesized_str
-    assert synthesized_str_3 == "Hello Fake World!", "synthesized_str_3 should be 'Hello Fake World'," \
-                                                     " but it is {}.".format(synthesized_str_3)
-    assert synthesized_str_3.synthesized is True, "synthesized_str_3 should be synthesized."
-    assert type(synthesized_str_3) == type(untrusted_str), "synthesized_str_3 type is not UntrustedStr"
-
-    synthesized_str_4 = str_literal + synthesized_str
-    assert synthesized_str_4 == "World!Fake World!", "synthesized_str_4 should be 'World!Fake World'," \
-                                                     " but it is {}.".format(synthesized_str_4)
-    assert synthesized_str_4.synthesized is True, "synthesized_str_4 should be synthesized."
-    assert type(synthesized_str_4) == type(untrusted_str), "synthesized_str_4 type is not UntrustedStr"
-
-    untrusted_str_4 = UntrustedStr("10")
-    try:
-        converted_int_1 = int(untrusted_str_4)
-    except TypeError as e:
-        print("'10' is untrusted, converting it to int using int() results in "
-              "TypeError: {error}".format(error=e))
-    assert int(untrusted_str_4.to_trusted()) == 10, "explicitly converted untrusted_str_4 should be 10, " \
-                                                    "but it is not."
-    assert type(int(untrusted_str_4.to_trusted())) == int, "explicitly converted untrusted_str_4 is not int"
-
-    synthesized_str_5 = UntrustedStr("10", synthesized=True)
-    try:
-        converted_int_2 = int(synthesized_str_5)
-    except TypeError as e:
-        print("'10' is synthesized, converting it to int using int() results in "
-              "TypeError: {error}".format(error=e))
-
-    untrusted_str_5 = UntrustedStr("10.5")
-    try:
-        converted_float_1 = float(untrusted_str_5)
-    except TypeError as e:
-        print("'10.5' is untrusted, converting it to float using float() results in "
-              "TypeError: {error}".format(error=e))
-    assert float(untrusted_str_5.to_trusted()) == 10.5, "explicitly converted untrusted_str_5 should be 10.5, " \
-                                                        "but it is not."
-    assert type(float(untrusted_str_5.to_trusted())) == float, "explicitly converted untrusted_str_5 is not float"
-
-    synthesized_str_6 = UntrustedStr("10.5", synthesized=True)
-    try:
-        converted_float_2 = synthesized_str_6.to_trusted()
-    except RuntimeError as e:
-        print("'10.5' is synthesized, converting it to float using to_trusted() without force results in "
-              "error: {error}".format(error=e))
-
-    try:
-        converted_str_1 = str(untrusted_str)
-    except TypeError as e:
-        print("'Untrusted World!' is untrusted, converting it to str using str() results in "
-              "TypeError: {error}".format(error=e))
-    assert untrusted_str.to_trusted() == 'Untrusted World!', "explicitly converted untrusted_str should be " \
-                                                             "'Untrusted World!, but it is not."
-    assert type(untrusted_str.to_trusted()) == str, "explicitly converted untrusted_str type is not str"
-
-    try:
-        converted_str_2 = str(synthesized_str)
-    except TypeError as e:
-        print("'Fake World!' is synthesized, converting it to str using str() results in "
-              "TypeError: {error}".format(error=e))
-
-
-def untrusted_bytearray_test():
-    # TODO: Add more test cases.
-    trusted_bytearray = bytearray([110, 115, 120, 125, 130])
-    untrusted_bytearray = UntrustedBytearray(trusted_bytearray)
-    # Some expected test cases (bytearray is much less tested since it is not commonly used)
-    assert trusted_bytearray == untrusted_bytearray, "trusted_bytearray and untrusted_bytearray should be equal"
-    byte = untrusted_bytearray.pop(2)
-    assert byte == 120, "the third byte in the untrusted_bytearray should be 120, not {val}".format(val=byte)
-    assert type(byte) == UntrustedInt, "each byte in an untrusted bytearray should be an untrusted integer"
-    capital_byte_array = untrusted_bytearray.capitalize()
-    assert type(capital_byte_array) == UntrustedBytearray, "capital_byte_array should be untrusted"
-
-
 if __name__ == "__main__":
-    untrusted_int_test()
-    untrusted_float_test()
-    untrusted_decimal_test()
-    untrusted_str_test()
-    untrusted_bytearray_test()
+    import math
+    import builtins
+    import warnings
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+    from django.splice.trustedtypes import TrustAwareInt as int
+    from django.splice.trustedtypes import TrustAwareFloat as float
+    from django.splice.trustedtypes import TrustAwareStr as str
+    from django.splice.trustedtypes import TrustAwareBytes as bytes
+    from django.splice.trustedtypes import TrustAwareBytearray as bytearray
+    from django.splice.trustedtypes import TrustAwareDecimal as Decimal
+    # Import from this file to fix the namespace issue. Reference:
+    # https://stackoverflow.com/questions/15159854/python-namespace-main-class-not-isinstance-of-package-class
+    from django.splice.untrustedtypes import (UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedBytes,
+                                              UntrustedBytearray, UntrustedDecimal)
+
+    int_test()
+    float_test()
+    str_test()
+    bytearray_test()
+    decimal_test()
