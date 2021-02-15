@@ -190,9 +190,8 @@ Therefore, after the decoration process is finished, the new MRO will be:
 > <summary>List of Non-decorated Methods</summary>
 > Special methods that create, initialize, or destroy class instances:
 >
-> 1. `__new__`
-> 2. `__init__`
-> 3. `__del__`
+> 1. `__init__`
+> 2. `__del__`
 >
 > Special methods that control attribute access for class instance:
 > 1. `__getattr__`
@@ -231,7 +230,7 @@ corresponding untrusted type. For example, to decorate `int`'s `__add__` method,
 Splice converts the sum to `UntrustedInt` and returns the untrusted value.
 Similarly, if a method originally returns a `str` object, Splice would convert
 it to `UntrustedStr`. Additionally, if any input to the method is *synthesized*
-(i.e., if an input is of untrusted type and has its synthesized attributed set),
+(i.e., if an input is of untrusted type and has its synthesized attribute set),
 the returned object will be synthesized as well.
 
 This decoration approach works well in most cases, but has the following
@@ -243,7 +242,8 @@ This decoration approach works well in most cases, but has the following
    untrustiness will not be properly propagated afterwards.
 2. This approach affects only the return value. Therefore, it is mostly designed
    for methods on *immutable* native classes. If a method affects a mutable object
-   in its input (e.g., `self`), no conversion is performed.
+   in its input (e.g., `self`), no conversion is performed
+   (see [Mutable Objects](#mutable-objects) for discussion on such a case).
 
 <details>
 <summary>Special Methods Related to Type Coercion</summary>
@@ -420,6 +420,69 @@ type of multiplication. In both cases, if <code>s</code> is of built-in
 <code>str</code> type (e.g., a string literal like in the example), Splice cannot
 interpose these operations, and the return value would not be untrusted or
 trusted-aware (even if the integer is untrusted or trust-aware).
+</details>
+
+#### [Mutable Objects](#mutable-objects)
+The decorators discussed in previous sections work well mostly with operations
+(i.e., methods) involving *immutable* objects. Since such objects cannot be
+modified in-place, operations that update the values of those objects typically
+create new objects instead (and let garbage collection reclaim memory space of
+the old objects). As such, the return value of such an operation is usually the
+new object, and Splice's function decorators can then convert them into an
+untrusted or a trust-aware object. However, this is not always the case for
+operations involving *mutable* objects. We illustrate this case using the built-in
+`bytearray` class, which has the method `append()` defined:
+```python
+from django.splice.untrustedtypes import UntrustedInt, UntrustedBytearray
+
+b = bytearray([110, 115, 120, 125, 130])
+b.append(135)  # b is updated in-place through append()
+assert type(b) == bytearray
+b.append(UntrustedInt(135))
+assert type(b) == UntrustedBytearray  # assertion fails using the decoration process discussed above
+```
+`append()`'s first argument (typically named `self`) is the `bytearray` object
+to be appended. It directly modifies the object through this reference, instead
+of returning a new `bytearray` object, because the object itself is mutable. As
+a result, `append()` returns `None`, and the decoration process described before
+will not convert the trust-aware `bytearray` object to an untrusted object even
+through an `UntrustedInt` object is appended to the `bytearray` object.
+
+We must *replace* the existing object to address this issue. This is difficult in
+Python because we must find all references to the replaced object and redirect
+them to the new object so that the replaced object can later be garbage collected.
+The replaced object may have references inside a list, in a dictionary, as a class
+attribute, etc, so we must update them accordingly. Splice follows the approach
+as described in this
+[post](https://benkurtovic.com/2015/01/28/python-object-replacement.html)
+to perform object replacement, but there still exist corner cases that are
+impossible to handle in Python without modifying the underlying Python
+implementation. This approach is also language-specific to CPython; it does not
+work on other implementations (e.g., Jython).
+
+While converting a trust-aware object to its untrusted counterpart in-place requires
+object replacement, it is much simpler to convert an untrusted object to be
+synthesized: we need only to set the "synthesized" attribute of the object
+to `True`.
+
+<details>
+<summary>Decorating <code>__new__</code></summary>
+For many types other than <code>int</code>, <code>float</code>, and <code>str</code>,
+if one calls a trust-aware object constructor with *untrusted* input, Splice
+decorates the <code>__new__</code> special method and returns an untrusted object
+instead. This is possible because unlike those built-in primitive types (whose
+constructors are also built-in functions), Python does not enforce the return
+type. For example, with decorated <code>__new__</code>:
+
+```python
+from django.splice.untrustedtypes import UntrustedInt, UntrustedBytearray
+
+b = bytearray([UntrustedInt(110), 111, 112, UntrustedInt(113, synthesized=True)])
+assert type(b) == UntrustedBytearray  # instead of trust-aware bytearray
+assert b.synthesized is True
+b = b.to_trusted()  # always use to_trusted() to obtain the trust-aware object
+assert type(b) == bytearray
+```
 </details>
 
 # Deletion by Synthesis
