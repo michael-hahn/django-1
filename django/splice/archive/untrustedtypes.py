@@ -3,7 +3,7 @@
 from decimal import Decimal
 from datetime import datetime
 
-from django.splice.utils import UntrustedMixin
+from django.splice.archive.utils import UntrustedMixin
 
 
 class UntrustedInt(UntrustedMixin, int):
@@ -73,7 +73,7 @@ class UntrustedFloat(UntrustedMixin, float):
 
 
 class UntrustedStr(UntrustedMixin, str):
-    """Subclass Python trusted float class and UntrustedMixin."""
+    """Subclass Python trusted str class and UntrustedMixin."""
 
     def __new__(cls, *args, synthesized=False, **kwargs):
         self = super().__new__(cls, *args, **kwargs)
@@ -1505,10 +1505,10 @@ def str_test():
     assert c == 2
     assert c.synthesized is True
     assert type(c) == UntrustedInt
-    # FIXME: str_literal returns builtins str
+    # FIXME: str_literal returns builtins int
     c = str_literal.count(UntrustedStr("d"))
     assert c == 1
-    assert type(s) == builtins.str
+    assert type(c) == builtins.int
 
     # encode()
     b = base_str.encode()
@@ -1522,7 +1522,7 @@ def str_test():
     assert type(b) == UntrustedBytes
     assert b.synthesized is True
 
-    # FIXME: str_literal returns builtins str
+    # FIXME: str_literal returns builtins bytes
     b = str_literal.encode()
     assert type(b) == builtins.bytes
 
@@ -2072,7 +2072,7 @@ def bytearray_test():
     assert type(untrusted_b) == UntrustedBytearray
     assert b == untrusted_b
     # Constructing a trust-aware bytearray with untrusted values returns an untrusted bytearray
-    # untrusted_b = bytearray([UntrustedInt(110), 111, 112, UntrustedInt(113, synthesized=True), 114])
+    untrusted_b = bytearray([UntrustedInt(110), 111, 112, UntrustedInt(113, synthesized=True), 114])
 
     # append()
     b.append(135)
@@ -2308,16 +2308,16 @@ if __name__ == "__main__":
     import warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-    from django.splice.trustedtypes import TrustAwareInt as int
-    from django.splice.trustedtypes import TrustAwareFloat as float
-    from django.splice.trustedtypes import TrustAwareStr as str
-    from django.splice.trustedtypes import TrustAwareBytes as bytes
-    from django.splice.trustedtypes import TrustAwareBytearray as bytearray
-    from django.splice.trustedtypes import TrustAwareDecimal as Decimal
+    from django.splice.archive.trustedtypes import TrustAwareInt as int
+    from django.splice.archive.trustedtypes import TrustAwareFloat as float
+    from django.splice.archive.trustedtypes import TrustAwareStr as str
+    from django.splice.archive.trustedtypes import TrustAwareBytes as bytes
+    from django.splice.archive.trustedtypes import TrustAwareBytearray as bytearray
+    from django.splice.archive.trustedtypes import TrustAwareDecimal as Decimal
     # Import from this file to fix the namespace issue. Reference:
     # https://stackoverflow.com/questions/15159854/python-namespace-main-class-not-isinstance-of-package-class
-    from django.splice.untrustedtypes import (UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedBytes,
-                                              UntrustedBytearray, UntrustedDecimal)
+    from django.splice.archive.untrustedtypes import (UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedBytes,
+                                                      UntrustedBytearray, UntrustedDecimal)
 
     int_test()
     float_test()

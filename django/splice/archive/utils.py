@@ -10,7 +10,7 @@ that all data types are either trust-aware or untrusted.
 import functools
 import warnings
 
-from django.splice.replace import replace
+from django.splice.archive import replace
 
 
 # Special methods that should not be decorated.
@@ -94,7 +94,7 @@ def contains_untrusted_arguments(*args, **kwargs):
 def to_trusted(value, forced=False):
     """
     Explicitly coerce a value to its trusted type, if the value is
-    untrusted, by calling value's to_untrusted() method. Conversion
+    untrusted, by calling value's to_trusted() method. Conversion
     results in a RuntimeError if the untrusted value is synthesized,
     unless 'forced' is set to be True. If 'forced' is True, conversion
     always works. If value is not of an untrusted type, the same value
@@ -115,6 +115,19 @@ def to_untrusted(value, synthesized):
         return value
     else:
         return UntrustedMixin.to_untrusted(value, synthesized)
+
+
+def untrusted_return(func):
+    """A function decorator that makes the original function to return untrusted (but not synthesized) value."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        res = func(*args, **kwargs)
+        # Some quick return (no need to wrap those)
+        if res is NotImplemented or res is None:
+            return res
+        return to_untrusted(res, synthesized=False)
+
+    return wrapper
 
 
 class UntrustedMixin(object):

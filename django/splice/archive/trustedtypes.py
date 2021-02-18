@@ -3,7 +3,7 @@
 from decimal import Decimal
 from datetime import datetime
 
-from django.splice.utils import TrustAwareMixin, UntrustedMixin
+from django.splice.archive.utils import TrustAwareMixin, UntrustedMixin
 
 
 class TrustAwareInt(TrustAwareMixin, int):

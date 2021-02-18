@@ -9,7 +9,7 @@ to check its context argument to enforce trusted data sink.
 """
 
 from functools import wraps
-from django.splice.untrustedtypes import is_synthesized
+from django.splice.archive.utils import is_synthesized
 
 
 def check_context(render_func):
