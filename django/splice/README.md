@@ -134,8 +134,8 @@ class SpliceInt(SpliceMixin, int):
 ```
 Note that `SpliceMixin` must be inherited before `int`. We use the integer
 type as the running example for the rest of this section. See
-[Create a New Untrusted Class](#create-a-new-untrusted-class) for a different
-example.
+[Create a New Splice-Managed Class](#create-a-new-splice-managed-class) for a
+different example.
 
 One important task of `SpliceMixin` is to *decorate* the methods inherited from
 the existing class (`int`) so that the subclass (`SpliceInt`) 1) mimics the
@@ -286,7 +286,7 @@ w = i.__add__(x)    # type(w) == int, because the reflected method is not invoke
 Additionally, any `boolean` operation must return a boolean value and is not
 allowed to be managed by Splice.
 
-#### Converting `str`
+#### Managing `str`
 Using `str` as an example, we discuss additional considerations when managing
 existing classes. Some of the considerations are specific to `str`, while others
 are more general, applicable to a wide range of data types (e.g., all classes
@@ -351,6 +351,127 @@ type of multiplication. In both cases, if <code>s</code> is a built-in
 <code>str</code> object, Splice cannot manage these operations, even if the integer
 is managed by Splice.
 </details>
+
+# Deletion by Synthesis
+:lock_with_ink_pen:
+
+## Customize a Synthesizer
+Splice provides a number of built-in synthesizers (e.g., `IntSynthesizer`,
+`FloatSynthesizer`, `StrSynthesizer`) that can synthesize different types of
+objects (e.g., `int`, `float`, and `str`). All synthesizers inherit from the base
+class `Synthesizer` and output objects of their corresponding Splice-managed type
+(e.g., `SpliceInt`, `SpliceFloat`, and `SpliceStr`). Using these fundamental
+synthesizers, the programmer can (in most cases) easily create new synthesizers
+for other existing classes. It is recommended that a customized synthesizer should
+also inherit from `Synthesizer`. Additionally, the new synthesizer *must* return
+objects of Splice-managed type. This may entail creating a new Splice-managed class,
+which can be done through inheritance. We use an example to illustrate this process.
+
+### Create `DatetimeSynthesizer`
+The following are the steps to create a synthesizer that synthesizes Python's
+`datetime` objects:
+1. Create a new synthesizer class `DatetimeSynthesizer` that inherits from
+   `FloatSynthesizer`.
+2. Define a new method in the class that converts a `datetime` object to a
+   `float` object, e.g., by calling `datetime`'s `timestamp()` method.
+3. Override `to_python()` in the class to convert the synthesized `float` value
+   to a `datetime` object and then re-class the `datetime` object to its
+   corresponding Splice-managed type `SpliceDatetime` (see
+   [Create a New Splice-Managed Class](#create-a-new-splice-managed-class)).
+4. Override `simple_synthesis()` in the class to return an `SpliceDatetime`
+   object with its `trusted` attribute set to `False` and `synthesized` attribute
+   to `True`.
+
+The code for `DatetimeSynthesizer` would look like this:
+```python
+from django.splice.synthesis import FloatSynthesizer
+
+class DatetimeSynthesizer(FloatSynthesizer):
+    @staticmethod
+    def to_float(value):
+        # Convert value (a datetime object) to float.
+        pass
+
+    @staticmethod
+    def to_python(value):
+        # Override FloatSynthesizer's to_python() to
+        # convert a float object back to a datetime
+        # object and return a Splice-managed object.
+        pass
+
+    @staticmethod
+    def simple_synthesis(value):
+        # Override FloatSynthesizer's simple_synthesis()
+        # to return a Splice-managed datetime object with
+        # the trusted flag set to False and the synthesized
+        # flag to True.
+        pass
+```
+When a `datetime` object is to be synthesized, the programmer should call
+`to_float()` first to convert the value to `float` and then use
+`DatetimeSynthesizer` like a `FloatSynthesizer`. `to_python()` and
+`simple_synthesis()` must return an `SpliceDatetime` object, not Python's
+`datetime` object, which requires us to define an `SpliceDatetime` class.
+
+### [Create a New Splice-Managed Class](#create-a-new-splice-managed-class)
+The common template to create a new Splice-managed class (and in this example,
+the `SpliceDatetime` class) looks like this:
+```python
+import datetime
+from django.splice.splice import SpliceMixin
+
+class SpliceDatetime(SpliceMixin, datetime):
+    """Subclass Python datetime module's datetime class and SpliceMixin."""
+    @classmethod
+    def splicify(cls, value, trusted, synthesized):
+        year = value.year
+        month = value.month
+        day = value.day
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        return SpliceDatetime(year=year,
+                              month=month,
+                              day=day,
+                              hour=hour,
+                              minute=minute,
+                              second=second,
+                              microsecond=microsecond,
+                              trusted=trusted,
+                              synthesized=synthesized)
+```
+An `SpliceDatetime` object will behave exactly like a `datetime` object
+except that it is now managed by Splice (for untrustiness/synthesis). All methods
+in `SpliceDatetime` are inherited from `datetime` and decorated by `SpliceMixin`.
+However, in this particular example, the programmer must override the `splicify()`
+class method that constructs a `SpliceDatetime` object from a `datetime` object,
+which is referenced by the `value` parameter. This override is usually *not*
+necessary for user-defined, program-specific classes (as long as they are heap types
+or ModuleType subclasses); they most likely can inherit `splicify()` directly from
+`SpliceMixin`.
+
+Occasionally, the programmer may determine that some methods should *not* be managed
+by Splice. The programmer can override those methods in `SpliceDatetime`. For example,
+```python
+import datetime
+from django.splice.splice import SpliceMixin
+
+class SpliceDatetime(SpliceMixin, datetime):
+    def timetuple(self):
+        # We simply call datetime timetuple() to override the
+        # method so that timetuple() will not be decorated
+        return super().timetuple()
+```
+
+`DatetimeSynthesizer` and `SpliceDatetime` are implemented in
+`django.splice.synthesis` and `django.splice.splicetypes`, respectively,
+for reference.
+
+# [Trusted Sinks](#trusted-sinks)
+Trusted data sinks are locations where only non-synthesized data is allowed.
+
+:lock_with_ink_pen:
 
 # Footnotes
 <b id="f1">1.</b> In a Splice-managed Python program, *all* classes should be

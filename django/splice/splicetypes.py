@@ -161,20 +161,4 @@ class SpliceDatetime(SpliceMixin, datetime):
 
 
 if __name__ == "__main__":
-    # d = SpliceDatetime(year=2020, month=12, day=24)
-    from django.splice.splicetypes import SpliceInt as int
-
-    i = int("20", trusted=False, synthesized=True)
-    print(i.trusted)
-    print(i.synthesized)
-    s = SpliceStr("20")
-    print(s.trusted)
-
-    print(s.synthesized)
-    i = int(s)
-    # i = int(s)
-    print(i)
-    print(type(i))
-    print(i.trusted)
-    # i = SpliceInt(10)
-    # f = float(i)
+    pass
