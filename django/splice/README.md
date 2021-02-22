@@ -15,22 +15,22 @@ of such data can cause harm to the program or even the underlying system (e.g.,
 SQL injection caused by malicious input from the network), or return bogus values.
 
 ## [Python Background](#python-background)
-Python is a popular object-oriented programming language, in which *every* data
-(e.g., literals, classes, functions) is an *object* and every object has a
-*type* defined by the *class* from which the object was instantiated. The type
-of object determines the *methods* that are available to call on that object.
-Those methods are defined in the class, and because Python supports
-multi-inheritance, which allows a class to subclass from multiple base classes,
-methods defined in the base classes can be inherited or overridden by the subclass.
+Python is a dynamically-typed, object-oriented programming language, in which
+*everything* (e.g., literals, classes, functions) is an *object* and every object
+has a *type* defined by the *class* from which the object was instantiated. The
+type of object determines the *methods* (operations) that are available on that
+object, which are defined in the class. Python supports multi-inheritance,
+which allows a class to subclass from multiple base classes; therefore, methods
+defined in base classes can be inherited or overridden by the subclass.
 Every class also has a set of predefined *special methods*, as specified by
-Python's **data model**, that enrich customized classes with language features that
-emulate operations of built-in types. Those special methods are in fact Python's
-approach to *operator overloading*. Their names are all prefixed and affixed by
-two underscores and therefore often referred to as "dunder" (double-underscore)
-methods. For example, to allow a customized class to emulate the addition operation
-(`+`) of numeric types (e.g., `int`), Python provides a special method `__add__`.
-If the customized class defines `__add__`, Python invokes this method when objects
-of the customized class are being summed together.
+Python's **data model**, that enrich customized (i.e., user-defined) classes with
+language features that emulate operations of built-in types. Those special methods
+are in fact Python's approach to *operator overloading*. Their names are all
+prefixed and affixed by two underscores and thus often referred to as "dunder"
+(double-underscore) methods. For example, to allow a customized class to emulate the
+addition operation (`+`) of numeric types (e.g., `int`), Python provides a special
+method `__add__`. If the customized class defines `__add__`, Python invokes this
+method when objects of the customized class are being summed together.
 
 Special methods involving *binary arithmetic operations* (e.g., `+`, `-`, and ``<<``)
 have their corresponding *reflected* (or swapped) method with an additional "r"
@@ -56,31 +56,31 @@ untrusted, and untrusted objects must be either synthesized (if their values wer
 reassigned by Splice) or non-synthesized. Python creates new data objects in two ways:
 1) *Explicitly*, when developer-written code directly calls a class object as a
    function call. For example, to explicitly create an integer object, the developer
-   can call the built-in integer class object:
+   can call the built-in `int` class object:
    ```python
-   # the built-in integer class object
+   # the built-in int class object
    class int(object):
        ...
        # attributes associated with the class object
    i = int(0)  # calling the class object as a function call
    ```
 2) *Implicitly*, when developer-written code triggers an execution path that creates
-   a new object. For example, summing two integer objects implicitly creates a new
-   integer object and so does getting the absolute value of an integer object:
+   a new object. For example, summing two `int` objects implicitly creates a new
+   `int` object and so does getting the absolute value of an `int` object:
    ```python
    x = int(3)
    y = int(-4)
-   a = x + y   # a is a new integer object
-   b = abs(x)  # b is also a new integer object
+   a = x + y   # a is a new int object
+   b = abs(x)  # b is also a new int object
    ```
 Splice needs to interpose on both types of object creation to ensure that
 untrustiness always propagates into newly-created objects during execution, thus
 preventing new objects from accidentally terminating untrustiness flow prematurely.
-Interposing on implicit creation paths is challenging because 1) not all execution
+Interposing on implicit object creation paths is challenging because 1) not all
 paths create new objects. Splice must differentiate the ones that do from the ones
 that do not; 2) while it is clear from explicit object creation the type of
 object being created (which is the same as the class object), it depends on the
-nature of the execution path to determine object type(s) from implicit object
+nature of the operation to determine object type(s) from implicit object
 creation. For example, true division of two `int` objects creates a new `float`
 object, while floor division creates a new `int` object:
 ```python
@@ -90,9 +90,9 @@ a = x / y   # a is a float object created from true division
 b = x // y  # b is an int object created from floor division
 ```
 For execution paths that do not create new objects, a further complication arises
-when an execution path *mutates* an *existing* object involved in the execution.
+when a path *mutates an existing object* involved in the execution.
 For example, when a byte is appended to an existing `bytearry` object, the operation
-does not create a new `bytearray` object but mutates the existing `bytearray` object
+does not create a new `bytearray` but mutates the existing `bytearray` object
 in-place:
 ```python
 b = bytearray([0, 1, 2])
@@ -106,17 +106,17 @@ In general, any execution path on a *mutable* object may mutate the object and/o
 implicitly create new objects, but any execution path on an *immutable* object may
 only create new objects. While objects of most (but not all) built-in types are
 immutable, developer-defined classes are typically mutable by default, but it is
-possible to programmatically enforce immutability for developer-defined classes.
+possible to programmatically enforce immutability for such classes.
 
 As mentioned in [Python Background](#python-background), special methods are Python's
 approach to operator overloading and are called when an execution path invokes their
 corresponding operators. Splice treats some special methods differently from other
-special methods (or non-special methods), because they do not create or modify
+one (or non-special methods), because those methods do not create or modify
 objects *as a result of the data flow* within a program. Instead, they determine the
 *control* of data objects and their information flow. For example, as we shall see
 in [Managing `str`](#managing-str), `__iter__` is a special method that creates an
 iterator for a program to iterate through an iterable object (e.g., a string or
-a list). The iterator only controls how actual data objects (e.g, characters in a
+a list). The iterator only controls how actual data objects (e.g., characters in a
 string or items in a list) are visited (e.g., in a `for` loop). Therefore, Splice
 must ensure that untrustiness propagates to those data objects, not the iterator
 object itself.
@@ -127,7 +127,7 @@ creation, and 2) propagate those attributes according to a set of rules (discuss
 below) when methods manipulate the objects, but 3) otherwise preserve the behavior
 of the existing class. For clarity of exposition, we henceforth call the interposed
 class a Splice-managed class and prefix all Splice-managed class names with `Splice`.
-For example, a Splice-managed integer class is denoted as `SpliceInt`, and it
+For example, a Splice-managed `int` class is denoted as `SpliceInt`, and it
 interposes on the built-in `int` type.<sup id="a1">[1](#f1)</sup>
 For the programmer, defensive programming means that the programmer should always
 check the attributes of an object before meaningfully using the object (e.g.,
@@ -138,18 +138,21 @@ defensive programming at places where only trusted data should exist (e.g., at
 Given the discussion above, we can now enumerate 1) the kinds of program behavior
 that Splice must interpose on, and 2) what Splice must do for each kind of behavior
 to ensure accurate propagation of (un)trustiness/synthesis.
-1. In general, for explicit object creation, Splice interposes on the special method
-   `__new__` to return an untrusted (synthesized) object if *any* input argument
-   to the method is untrusted (synthesized). Splice also adds two optional binary
-   arguments, `trusted` and `synthesized`, to be available for explicit object
-   creation, so that the creation process can directly set those attributes. However,
+1. In general, for explicit object creation, Splice interposes on the class creation
+   process (metaclass) by overriding the `__call__` special method on the *class
+   object*, which controls the `__new__` and `__init__` special methods that would
+   be invoked by a class to instantiate a new object of the class. Splice returns
+   an untrusted (synthesized) object if *any* input argument to object creation is
+   untrusted (synthesized). Splice also adds two optional binary arguments,
+   `trusted` and `synthesized`, to be available for any explicit object creation
+   call, so that the creation process can directly set those attributes. However,
    those arguments can only *downgrade* the object's trustiness. That is, for example,
    if all other input arguments to construct an object are trusted, one can set the
    `trusted` argument to `False` to make the object untrusted. However, if at least
    one input argument is untrusted (and thus the object should be untrusted),
    setting the `trusted` argument to `True` leads to an error.
-   > This applies to most objects, such as `int()` and `float()` that explicitly
-   > create integer and float objects. Here are some examples using `int()`:
+   > This rule applies to most objects, such as `int()` and `float()` that explicitly
+   > create `int` and `float` objects. Here are some examples using `int()`:
    > ```python
    > from django.splice.splicetypes import SpliceInt as int
    > from django.splice.splicetypes import SpliceStr as str
@@ -160,37 +163,44 @@ to ensure accurate propagation of (un)trustiness/synthesis.
    > k = int(s)  # k is untrusted and non-synthesized because of s.
    > x = int(s, trusted=True)  # Error: s is untrusted but the trusted flag is set to True.
    >```
-2. The return object of a method on a calling object (i.e., implicit object creation
-   from an execution path) is untrusted (synthesized) if at least one input argument
-   is untrusted (synthesized).
-   > This applies methods on both immutable and mutable calling objects. Note
-   > that, as briefly discussed above, not all operations should propagate
-   > untrustiness/synthesis this way and not all objects have untrustiness/synthesis
+2. For implicit object creation from an execution path, the return object of a
+   method is untrusted (synthesized) if at least one input argument is untrusted
+   (synthesized).
+   > This rule applies to methods on both immutable and mutable calling objects.
+   > Note that, as briefly discussed above, not all operations should propagate
+   > untrustiness/synthesis this way, and not all objects have untrustiness/synthesis
    > attributes (see [Technical Details](#technical-details)).
 3. For methods that are not class methods or static methods, the first argument,
    which is the calling object, becomes untrusted (synthesized) if its value is
    modified *and* if any remaining input argument is untrusted (synthesized).
    > This rule applies to methods that modify the mutable calling object.
+   > :construction: For class methods and static methods, the first argument is
+   > not the calling object. Therefore, we cannot follow this rule.
 4. The programmer can grant trust to an object, but this action must be performed
    explicitly (by calling a `to_trusted()` function), so that the programmer's
    intent is expressed clearly in the code.
 
+> :construction: The rules do not yet cover all possible scenarios for untrustiness
+> propagation, for example, when a class method modifies an existing object in-place.
+
 In summary, a Python program running on top of Splice runs just like a regular
-Python program without Splice, except that:
+program without Splice, except that:
 1. *All* classes in the program, including built-in, library, and developer-defined
    classes, must be interposed by Splice so that operations between objects
    propagate untrustiness/synthesis. Splice leverages inheritance to make this
    process as transparent to the programmer as possible.
 2. The programmer should practice **defensive programming**, especially when
-   untrusted or synthesized objects are involved. At times, Splice also
-   enforces proper handling of untrusted/synthesized objects, for example,
-   at [trusted sinks](#trusted-sinks), where only trusted objects are allowed.
+   untrusted or synthesized objects are involved. This practice should in fact
+   be adopted for any program that may process malicious data, regardless of
+   Splice's presence. At times, Splice enforces proper handling of
+   untrusted/synthesized objects, for example, at [trusted sinks](#trusted-sinks),
+   where only trusted objects are allowed.
 
 ### [Technical Details](#technical-details)
 Splice leverages class inheritance to manage existing classes. A Splice-managed
 class inherits from an existing class and a `SpliceMixin` class, which must be
 inherited by all Splice-managed classes. `SpliceMixin` contains most logic needed
-for managing untrustiness/synthesis. For example, a Splice-managed integer class,
+for managing untrustiness/synthesis. For example, a Splice-managed `int` class,
 denoted below as `SpliceInt`, is defined as:
 ```python
 from django.splice.splice import SpliceMixin
@@ -198,7 +208,7 @@ from django.splice.splice import SpliceMixin
 class SpliceInt(SpliceMixin, int):
     pass
 ```
-Note that `SpliceMixin` must be inherited before `int`. We use the integer
+Note that `SpliceMixin` must be inherited before `int`. We use the `int`
 type as the running example for the rest of this section. See
 [Create a New Splice-Managed Class](#create-a-new-splice-managed-class) for a
 different example.
@@ -230,20 +240,22 @@ process adheres to the following order:
    applies to methods that Splice have already encountered in (1) and (2)).
 
 Therefore, after the decoration process is finished, the new MRO will be:
-1. All defined methods in the Splice-managed class (both decorated and
+1. All methods defined in the Splice-managed class (both decorated and
    non-decorated) and all decorated methods from all the base classes.
 2. All methods defined in `SpliceMixin`.
 3. All other non-decorated methods from classes other than the Splice-managed class
    and `SpliceMixin`, resolved by the original MRO.
 
-> Some methods provide functionality that should not propagate untrustiness/synthesis
-> and therefore are skipped during iteration and not decorated.
+> Some methods provide functionality that should not propagate untrustiness/synthesis;
+> therefore, they are skipped during the iteration and not decorated.
 > <details>
 > <summary>List of Non-decorated Methods</summary>
-> Special methods that create, initialize, or destroy class instances:
+> Special methods that create, initialize, or destroy class instances
+> (note that Splice controls class object instantiation through metaclass):
 >
 > 1. `__init__`
-> 2. `__del__`
+> 2. `__new__`
+> 3. `__del__`
 >
 > Special methods that control attribute access for class instance:
 > 1. `__getattr__`
@@ -310,7 +322,7 @@ objects if untrusted input objects are involved in the operation.
 <details>
 <summary>Identify The Right Splice-Managed Class Through Registration</summary>
 Splice registers existing classes with their corresponding Splice-managed classes
-so that it knows how to re-class a returned object of e.g., a built-in type
+so that it knows how to re-class a return object of e.g., a built-in type
 to be of a Splice-managed class during decoration. Registration is done in
 <code>SpliceMixin</code> through reflection of the inheritance chain.
 </details>
@@ -363,7 +375,7 @@ allowed to be managed by Splice.
 
 #### [Managing `str`](#managing-str)
 Using `str` as an example, we discuss additional considerations when managing
-existing classes. Some of the considerations are specific to `str`, while others
+existing classes. Some considerations are specific to `str`, while others
 are more general, applicable to a wide range of data types (e.g., all classes
 that are iterable).
 
@@ -374,19 +386,19 @@ s = str("A string is iterable")
 for char in s:
     pass
 ```
-A special method `__iter__`, which returns an *iterator*, is what makes iteration
-possible. However, we should not decorate the iterator object per se, but the
-object returned by the iterator. As such, Splice overrides `__iter__` in
+A special method `__iter__`, which returns an *iterator* object, is what makes
+iteration possible. However, we should not decorate the iterator object per se,
+but the object returned by the iterator. As such, Splice overrides `__iter__` in
 `SpliceMixin`, invoking the iterator of the existing class (if defined) and
 re-classing the objects returned by the iterator to be the Splice-managed class.
-Note that, Splice modifies the iteration behavior of *all* iterable classes,
+Note that, Splice interposes on the iteration behavior of *all* iterable classes,
 not just `str`.
 
 Splice considers string (i.e., `str()`, `__str__`, and the similar `repr()`,
 `__repr__`, `format()`, and `__format__`) to be a trusted sink; therefore,
 Splice raises an error if input to these functions/methods is not
 trusted.<sup id="a2">[2](#f2)</sup> This is different from how Splice manages
-other object construction and special methods.
+other object creation methods.
 
 Not all binary arithmetic methods have a corresponding reflected (swapped) method.
 As specified in Python's data model, it is important that the emulation
@@ -403,7 +415,7 @@ s = "Hello " + str("world!")
 Without `__radd__`, the built-in `str` object (i.e., `"Hello "`) invokes `__add__`
 and creates a new built-in `str` object, `"Hello world!`. If `__radd__` were defined,
 since `SpliceStr` is a subclass of `str`, Python would invoke `__radd__` of the
-the `SpliceStr` object, and the returned object would be a Splice-managed object.
+the `SpliceStr` object, and the return object would be a Splice-managed object.
 Thus, Splice defines a `__radd__` in `SpliceStr`. Note that `__radd__` is *not*
 directly defined in `SpliceMixin`, which would affect all Splice-managed classes,
 because having `__radd__` may not make sense for all existing classes.
