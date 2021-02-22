@@ -18,7 +18,7 @@ SQL injection caused by malicious input from the network), or return bogus value
 Python is a popular object-oriented programming language, in which *every* data
 (e.g., literals, classes, functions) is an *object* and every object has a
 *type* defined by the *class* from which the object was instantiated. The type
-of an object determines the *methods* that are available to call on that object.
+of object determines the *methods* that are available to call on that object.
 Those methods are defined in the class, and because Python supports
 multi-inheritance, which allows a class to subclass from multiple base classes,
 methods defined in the base classes can be inherited or overridden by the subclass.
@@ -47,42 +47,109 @@ case allows a subclass to override its ancestors’ operations (without forcing
 the object of the subclass to always be the left operand).
 
 ## Splice in Python
-Python's object-oriented, multi-inheritance programming model makes it easy for
-Splice to modify the behavior of existing Python classes. As a result, the
-programmer can easily transform an existing Python application to be managed
-by Splice.
+Python's multi-inheritance programming model enables Splice to modify the behavior
+of existing Python classes, so that objects in a Splice-managed program can
+transparently propagate untrustiness without annotations from the programmer.
 
-One important task that Splice performs in a Python program is untrustiness
-propagation. Data objects must be either trusted or untrusted, and untrusted
-objects must be either synthesized (if their values were reassigned by Splice)
-or non-synthesized. To add these two attributes (i.e., the binary `trusted` and
-`synthesized` property) to existing classes, Splice constructs for each class
-through inheritance, a replacement class that 1) attaches these attributes to its
-instantiated objects, and 2) propagates them according to a set of rules (discussed
-below) when class methods manipulate the objects, but 3) otherwise preserves the
-behavior of the replaced class. For clarity of exposition, we henceforth call the
-replacement class a Splice-managed class and prefix all Splice-managed class names
-with `Splice`. For example, a Splice-managed integer class is denoted as
-`SpliceInt`, and it replaces the built-in `int` type.<sup id="a1">[1](#f1)</sup>
+Specifically, in a Splice-managed program, data objects must be either trusted or
+untrusted, and untrusted objects must be either synthesized (if their values were
+reassigned by Splice) or non-synthesized. Python creates new data objects in two ways:
+1) *Explicitly*, when developer-written code directly calls a class object as a
+   function call. For example, to explicitly create an integer object, the developer
+   can call the built-in integer class object:
+   ```python
+   # the built-in integer class object
+   class int(object):
+       ...
+       # attributes associated with the class object
+   i = int(0)  # calling the class object as a function call
+   ```
+2) *Implicitly*, when developer-written code triggers an execution path that creates
+   a new object. For example, summing two integer objects implicitly creates a new
+   integer object and so does getting the absolute value of an integer object:
+   ```python
+   x = int(3)
+   y = int(-4)
+   a = x + y   # a is a new integer object
+   b = abs(x)  # b is also a new integer object
+   ```
+Splice needs to interpose on both types of object creation to ensure that
+untrustiness always propagates into newly-created objects during execution, thus
+preventing new objects from accidentally terminating untrustiness flow prematurely.
+Interposing on implicit creation paths is challenging because 1) not all execution
+paths create new objects. Splice must differentiate the ones that do from the ones
+that do not; 2) while it is clear from explicit object creation the type of
+object being created (which is the same as the class object), it depends on the
+nature of the execution path to determine object type(s) from implicit object
+creation. For example, true division of two `int` objects creates a new `float`
+object, while floor division creates a new `int` object:
+```python
+x = int(5)
+y = int(2)
+a = x / y   # a is a float object created from true division
+b = x // y  # b is an int object created from floor division
+```
+For execution paths that do not create new objects, a further complication arises
+when an execution path *mutates* an *existing* object involved in the execution.
+For example, when a byte is appended to an existing `bytearry` object, the operation
+does not create a new `bytearray` object but mutates the existing `bytearray` object
+in-place:
+```python
+b = bytearray([0, 1, 2])
+b.append(3)  # The bytearray object is mutated, but no new bytearray object is created
+```
+Splice must interpose on all execution paths that mutate existing objects, because
+mutation can alter the untrustiness of those objects and therefore affect how
+untrustiness propagates from them.
+
+In general, any execution path on a *mutable* object may mutate the object and/or
+implicitly create new objects, but any execution path on an *immutable* object may
+only create new objects. While objects of most (but not all) built-in types are
+immutable, developer-defined classes are typically mutable by default, but it is
+possible to programmatically enforce immutability for developer-defined classes.
+
+As mentioned in [Python Background](#python-background), special methods are Python's
+approach to operator overloading and are called when an execution path invokes their
+corresponding operators. Splice treats some special methods differently from other
+special methods (or non-special methods), because they do not create or modify
+objects *as a result of the data flow* within a program. Instead, they determine the
+*control* of data objects and their information flow. For example, as we shall see
+in [Managing `str`](#managing-str), `__iter__` is a special method that creates an
+iterator for a program to iterate through an iterable object (e.g., a string or
+a list). The iterator only controls how actual data objects (e.g, characters in a
+string or items in a list) are visited (e.g., in a `for` loop). Therefore, Splice
+must ensure that untrustiness propagates to those data objects, not the iterator
+object itself.
+
+Splice interposes on each existing class through inheritance to 1) introduce the
+`trusted` and `synthesized` attributes to its instantiated objects during object
+creation, and 2) propagate those attributes according to a set of rules (discussed
+below) when methods manipulate the objects, but 3) otherwise preserve the behavior
+of the existing class. For clarity of exposition, we henceforth call the interposed
+class a Splice-managed class and prefix all Splice-managed class names with `Splice`.
+For example, a Splice-managed integer class is denoted as `SpliceInt`, and it
+interposes on the built-in `int` type.<sup id="a1">[1](#f1)</sup>
 For the programmer, defensive programming means that the programmer should always
 check the attributes of an object before meaningfully using the object (e.g.,
 displaying the value of the object to a client's browser). Splice also assists
-defensive programming at places where only trusted data should exist
-(e.g., at [trusted sinks](#trusted-sinks)).
+defensive programming at places where only trusted data should exist (e.g., at
+[trusted sinks](#trusted-sinks)).
 
-Splice follows a set of simple rules to propagate (un)trustiness/synthesis:
-1. In general, object construction returns an untrusted (synthesized) object if
-   *any* input argument to the constructor is untrusted (synthesized). An object
-   constructor can also take two optional binary arguments, `trusted` and
-   `synthesized` that directly set the attributes. However, they can only
-   *downgrade* the object's trustiness. That is, for example, if all other
-   input arguments to construct an object are trusted, one can set the `trusted`
-   argument to `False` to make the object untrusted. However, if at least one input
-   argument is untrusted (and thus the object should be untrusted), setting the
-   `trusted` argument to `True` leads to an error.
-   > This rule applies to most objects, including built-in functions, e.g.,
-   > `int()` and `float()`, that construct integer and float objects. Here are
-   > some examples using `int()`:
+Given the discussion above, we can now enumerate 1) the kinds of program behavior
+that Splice must interpose on, and 2) what Splice must do for each kind of behavior
+to ensure accurate propagation of (un)trustiness/synthesis.
+1. In general, for explicit object creation, Splice interposes on the special method
+   `__new__` to return an untrusted (synthesized) object if *any* input argument
+   to the method is untrusted (synthesized). Splice also adds two optional binary
+   arguments, `trusted` and `synthesized`, to be available for explicit object
+   creation, so that the creation process can directly set those attributes. However,
+   those arguments can only *downgrade* the object's trustiness. That is, for example,
+   if all other input arguments to construct an object are trusted, one can set the
+   `trusted` argument to `False` to make the object untrusted. However, if at least
+   one input argument is untrusted (and thus the object should be untrusted),
+   setting the `trusted` argument to `True` leads to an error.
+   > This applies to most objects, such as `int()` and `float()` that explicitly
+   > create integer and float objects. Here are some examples using `int()`:
    > ```python
    > from django.splice.splicetypes import SpliceInt as int
    > from django.splice.splicetypes import SpliceStr as str
@@ -93,28 +160,27 @@ Splice follows a set of simple rules to propagate (un)trustiness/synthesis:
    > k = int(s)  # k is untrusted and non-synthesized because of s.
    > x = int(s, trusted=True)  # Error: s is untrusted but the trusted flag is set to True.
    >```
-2. The return object of a method on a calling object is untrusted (synthesized) if
-   at least one input argument is untrusted (synthesized).
-   > This rule applies to most methods on immutable calling objects but some
-   > methods on mutable calling objects modify the object in-place, which can be
-   > handled by the next rule. Note that not all operations should propagate
-   > untrustiness/synthesis and not all objects have untrustiness/synthesis
+2. The return object of a method on a calling object (i.e., implicit object creation
+   from an execution path) is untrusted (synthesized) if at least one input argument
+   is untrusted (synthesized).
+   > This applies methods on both immutable and mutable calling objects. Note
+   > that, as briefly discussed above, not all operations should propagate
+   > untrustiness/synthesis this way and not all objects have untrustiness/synthesis
    > attributes (see [Technical Details](#technical-details)).
-3. If a method returns `None`, the first argument (which is the calling object)
-   becomes untrusted (synthesized) if any remaining input argument is untrusted
-   (synthesized).
-   > This rule applies to methods that directly modify the mutable calling object
-   > but do not return a new object.
+3. For methods that are not class methods or static methods, the first argument,
+   which is the calling object, becomes untrusted (synthesized) if its value is
+   modified *and* if any remaining input argument is untrusted (synthesized).
+   > This rule applies to methods that modify the mutable calling object.
 4. The programmer can grant trust to an object, but this action must be performed
    explicitly (by calling a `to_trusted()` function), so that the programmer's
    intent is expressed clearly in the code.
 
 In summary, a Python program running on top of Splice runs just like a regular
 Python program without Splice, except that:
-1. *All* classes in the program, including built-in, library, and program-specific
-   classes, must be managed by Splice so that operations between objects propagate
-   untrustiness/synthesis. Splice leverages inheritance to make this process as
-   effortless as possible.
+1. *All* classes in the program, including built-in, library, and developer-defined
+   classes, must be interposed by Splice so that operations between objects
+   propagate untrustiness/synthesis. Splice leverages inheritance to make this
+   process as transparent to the programmer as possible.
 2. The programmer should practice **defensive programming**, especially when
    untrusted or synthesized objects are involved. At times, Splice also
    enforces proper handling of untrusted/synthesized objects, for example,
@@ -209,6 +275,15 @@ Therefore, after the decoration process is finished, the new MRO will be:
 > Special methods that control "With" statement context managers:
 > 1. `__enter__`
 > 2. `__exit__`
+>
+> Special methods that control how class instances are pickled and unpickled
+> 1. `__getnewargs_ex__`
+> 2. `__getnewargs__`
+> 3. `__getstate__`
+> 4. `__setstate__`
+> 5. `__reduce__`
+> 6. `__reduce_ex__`
+>
 > </details>
 
 In general, Splice transparently handles the iteration and decoration process,
@@ -286,7 +361,7 @@ w = i.__add__(x)    # type(w) == int, because the reflected method is not invoke
 Additionally, any `boolean` operation must return a boolean value and is not
 allowed to be managed by Splice.
 
-#### Managing `str`
+#### [Managing `str`](#managing-str)
 Using `str` as an example, we discuss additional considerations when managing
 existing classes. Some of the considerations are specific to `str`, while others
 are more general, applicable to a wide range of data types (e.g., all classes

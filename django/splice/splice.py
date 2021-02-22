@@ -1,5 +1,8 @@
 import functools
 import warnings
+import copy
+from django.splice.utils import is_class_method, is_static_method
+
 
 # Special methods that should not be decorated.
 do_not_decorate = {'__init__',
@@ -23,6 +26,19 @@ do_not_decorate = {'__init__',
                    '__subclasshook__',
                    '__subclasscheck__',
                    '__instancecheck__',
+                   # != is used in the decoration function . We cannot decorate methods used
+                   # in decoration, because doing so would create an infinite recursion!
+                   # Decorating methods that return a bool value does nothing anyways.
+                   '__ne__',
+                   # Pickling Class Instances. deepcopy() might call them for pickling,
+                   # and deepcopy is used in decoration. They shouldn't be decorated anyways.
+                   # (ref: https://docs.python.org/3/library/pickle.html#pickling-class-instances)
+                   '__getnewargs_ex__',
+                   '__getnewargs__',
+                   '__getstate__',
+                   '__setstate__',
+                   '__reduce__',
+                   '__reduce_ex__',
                    }
 
 
@@ -97,10 +113,15 @@ class MetaSplice(type):
     """
 
     def __call__(cls, *args, **kwargs):
-        # __new__ will be decorated by to_splice_cls()
-        # which will set the trusted and synthesized flags
-        # based on the args and kwargs.
+        # __new__ will not be decorated by to_splice_cls()
+        # so we must set the trusted and synthesized flags
+        # based on the args and kwargs afterwards here. We
+        # do not want to decorate __new__ because deepcopy()
+        # which is used in the decorator calls __new__. As
+        # such, we would create an infinite recursion!
         obj = cls.__new__(cls, *args, **kwargs)
+        untrusted, synthesized = contains_untrusted_arguments(*args, **kwargs)
+        obj = SpliceMixin.to_splice(obj, not untrusted, synthesized)
         # Object construction may also set
         # the flags explicitly in "kwargs".
         trusted = None
@@ -209,6 +230,18 @@ class SpliceMixin(metaclass=MetaSplice):
         for x in super().__iter__():
             yield SpliceMixin.to_splice(x, self.trusted, self.synthesized)
 
+    # def __deepcopy__(self, memo):
+    #     """
+    #     Override __deepcopy__ so that when deepcopy() is invoked in to_splice_cls(),
+    #     this method is called. Ref: https://stackoverflow.com/a/15774013/9632613.
+    #     """
+    #     cls = self.__class__
+    #     result = cls.__new__(cls)
+    #     memo[id(self)] = result
+    #     for k, v in self.__dict__.items():
+    #         setattr(result, k,  copy.deepcopy(v, memo))
+    #     return result
+
     @staticmethod
     def to_splice(value, trusted, synthesized):
         """
@@ -301,18 +334,32 @@ class SpliceMixin(metaclass=MetaSplice):
             def wrapper(*args, **kwargs):
                 # Calling inherited methods (including built-in methods) - IMPORTANT NOTE:
                 # res usually return objects of original (including built-in) type(s), but
-                # it is possible that res returns objects of (un)trusted types already.
-                # This is OK because SpliceMixin will return the same object if it is
-                # already of an (un)trusted type.
+                # it is possible that res returns objects of Splice-managed types already.
+                # This is OK because SpliceMixin will return the same object (perhaps with
+                # its trusted and synthesized attributes modified) if it is already of
+                # Splice-managed type.
 
                 # TODO: does it *always* make sense to consider the return value/self
                 #  untrusted/synthesized as long as any one of the input arguments is?
                 untrusted, synthesized = contains_untrusted_arguments(*args, **kwargs)
+                # Check if "self" (i.e., the first argument) is modified
+                # Note that this check applies only to methods that are
+                # not a class method or a static method, because otherwise
+                # the first argument is not "self"!
+                is_static = is_static_method(cls, func.__name__)
+                is_class = is_class_method(cls, func.__name__)
+                # We must use deep copy so that it actually holds a copy
+                # of the original "self", not just a reference. This is
+                # important for mutable objects.
+                self = copy.deepcopy(args[0])
+                # Execution the original method
                 res = func(*args, **kwargs)
-                # FIXME: perhaps there are more cases where "self" conversion
-                #  should occur but the "func" does not return None.
-                if res is None:
-                    # "self" must be splice-aware (every object in the program should be)
+                # If in-place updates occurred in func, then the object
+                # referenced by args[0] will be different from the
+                # original copy. Note that for immutable objects, this
+                # should never be the case!
+                if not is_static and not is_class and self != args[0]:
+                    # "self" should be splice-aware
                     if not isinstance(args[0], SpliceMixin):
                         raise RuntimeError("{} is not Splice-aware.".format(args[0]))
                     # See if "self" should be an untrusted and/or synthesized object.
@@ -320,9 +367,8 @@ class SpliceMixin(metaclass=MetaSplice):
                         args[0].trusted = False
                     if synthesized:
                         args[0].synthesized = True
-                    return res
-                # Some other quick return (nothing to do)
-                if res is NotImplemented:
+                # Some quick return (nothing else to do)
+                if res is None or res is NotImplemented:
                     return res
                 return SpliceMixin.to_splice(res, not untrusted, synthesized)
 
@@ -365,9 +411,6 @@ class SpliceMixin(metaclass=MetaSplice):
             value = getattr(mixin_cls, key)
             if not callable(value):
                 continue
-            # We want to decorate the __new__ method that SpliceMixin overrides.
-            if key == '__new__':
-                setattr(cls, key, to_splice_method(value))
             handled_methods.add(key)
         # Handle the remaining base classes
         for base in cls.__mro__[2:]:
