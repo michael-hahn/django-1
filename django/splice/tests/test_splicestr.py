@@ -1,7 +1,6 @@
 import pytest
 import builtins
 from django.splice.splicetypes import SpliceInt as int
-from django.splice.splicetypes import SpliceFloat as float
 from django.splice.splicetypes import SpliceStr as str
 from django.splice.splicetypes import SpliceBytes as bytes
 
@@ -48,6 +47,69 @@ def test_capitalize(trusted_str, untrusted_str, synthesized_str, literal_str):
     # FIXME: str_literal returns builtins str
     s = literal_str.capitalize()
     assert s == "World"
+    assert type(s) == builtins.str
+
+
+def test_casefold(trusted_str, untrusted_str, synthesized_str, literal_str):
+    s = trusted_str.casefold()
+    assert s == "hello"
+    assert type(s) == str
+    assert s.trusted is True
+    assert s.synthesized is False
+
+    s = untrusted_str.casefold()
+    assert s == "untrusted"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is False
+
+    s = synthesized_str.casefold()
+    assert s == "synthesized"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    s = literal_str.casefold()
+    assert s == "world"
+    assert type(s) == builtins.str
+
+
+def test_center(trusted_str, untrusted_str, synthesized_str, literal_str):
+    s = trusted_str.center(9, '*')
+    assert s == "**Hello**"
+    assert type(s) == str
+    assert s.trusted is True
+    assert s.synthesized is False
+
+    s = trusted_str.center(int(9, trusted=False), '*')
+    assert s == "**Hello**"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is False
+
+    s = untrusted_str.center(9, '*')
+    assert s == "untrusted"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is False
+    # assert s.to_trusted() == "untrusted"
+
+    s = untrusted_str.center(11, str('*', trusted=False, synthesized=True))
+    assert s == "*untrusted*"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is True
+
+    s = synthesized_str.center(11, '*')
+    assert s == "synthesized"
+    assert type(s) == str
+    assert s.trusted is False
+    assert s.synthesized is True
+
+    # FIXME: str_literal returns builtins str
+    s = literal_str.center(11, '*')
+    assert s == "***World***"
     assert type(s) == builtins.str
 
 
@@ -113,6 +175,68 @@ def test_encode(trusted_str, untrusted_str, synthesized_str, literal_str):
     # FIXME: str_literal returns builtins bytes
     b = literal_str.encode()
     assert type(b) == builtins.bytes
+
+
+# FIXME: endswith always returns bool
+def test_endswith(trusted_str, untrusted_str, synthesized_str, literal_str):
+    b = trusted_str.endswith("o")
+    assert b is True
+    assert type(b) == bool
+
+    b = trusted_str.endswith(str("o", trusted=False))
+    assert b is True
+    assert type(b) == bool
+
+    b = untrusted_str.endswith("o")
+    assert b is False
+    assert type(b) == bool
+
+    b = synthesized_str.endswith("o")
+    assert b is False
+    assert type(b) == bool
+
+    b = literal_str.endswith("o")
+    assert b is False
+    assert type(b) == bool
+# Other bool operations are skipped:
+# == (__eq__), >= (__ge__), > (__gt__), <= (__le__), < (__lt__), != (__ne__)
+
+
+def test_find(trusted_str, untrusted_str, synthesized_str, literal_str):
+    b = trusted_str.find("o")
+    assert b == 4
+    assert type(b) == int
+    assert b.trusted is True
+    assert b.synthesized is False
+
+    b = trusted_str.find(str("o", trusted=False))
+    assert b == 4
+    assert type(b) == int
+    assert b.trusted is False
+    assert b.synthesized is False
+
+    b = trusted_str.find("o", int(4, trusted=False, synthesized=True))
+    assert b == 4
+    assert type(b) == int
+    assert b.trusted is False
+    assert b.synthesized is True
+
+    b = untrusted_str.find(str("u", trusted=False, synthesized=True))
+    assert b == 0
+    assert type(b) == int
+    assert b.trusted is False
+    assert b.synthesized is True
+
+    b = synthesized_str.find("s")
+    assert b == 0
+    assert type(b) == int
+    assert b.trusted is False
+    assert b.synthesized is True
+
+    # FIXME: str_literal returns builtins int
+    b = literal_str.find("o")
+    assert b == 1
+    assert type(b) == builtins.int
 
 
 def test_join(trusted_str, untrusted_str, synthesized_str, literal_str):
