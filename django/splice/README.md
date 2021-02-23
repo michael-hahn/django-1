@@ -58,7 +58,7 @@ is a class (or type) of a class, instantiating class just like a class instantia
 its own objects. The relationships between an instance of a class and a class
 and between a class and a metaclass are illustrated below.
 
-![instance, class, and metaclass relationships](img/class.pdf)
+![instance, class, and metaclass relationships](img/class.png)
 
 Both class and metaclass supports inheritance. In a class inheritance chain, the
 root is always the `object` class, while in a metaclass inheritance chain, the
