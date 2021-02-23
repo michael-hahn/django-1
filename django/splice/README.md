@@ -32,19 +32,51 @@ addition operation (`+`) of numeric types (e.g., `int`), Python provides a speci
 method `__add__`. If the customized class defines `__add__`, Python invokes this
 method when objects of the customized class are being summed together.
 
+<details>
+<summary>Special Methods Involving Binary Arithmetic Operations</summary>
 Special methods involving *binary arithmetic operations* (e.g., `+`, `-`, and ``<<``)
 have their corresponding *reflected* (or swapped) method with an additional "r"
-prefixed in its method name (e.g., `__radd__` is `__add__`'s reflected method).
-The reflected method is called 1) if the operands are of different types, and the
-left operand does not define the non-reflected method, or 2) if the right operand’s
-type is a *subclass* of the left operand’s type and that subclass has a different
-implementation of the reflected method (instead of inheriting the reflected method
-from the base class). For example, when evaluating the expression `x + y`, if `x`
-and `y` are of two different types, `y.__radd__(x)` is called if `x.__add__(y)`
-is not implemented. On the other hand, if `y`'s type is a subclass of `x`'s type,
-then `x.__add__(y)` is called if `y.__radd__(x)` is not implemented. This latter
-case allows a subclass to override its ancestors’ operations (without forcing
-the object of the subclass to always be the left operand).
+prefixed in its method name (e.g., <code>__radd__</code> is <code>__add__</code>'s
+reflected method). The reflected method is called 1) if the operands are of
+different types, and the left operand does not define the non-reflected method,
+or 2) if the right operand’s type is a *subclass* of the left operand’s type and
+that subclass has a different implementation of the reflected method (instead of
+inheriting the reflected method from the base class). For example, when evaluating
+the expression <code>x + y</code>, if <code>x</code> and <code>y</code> are of two
+different types, <code>y.__radd__(x)</code> is called if <code>x.__add__(y)</code>
+is not implemented. On the other hand, if <code>y</code>'s type is a subclass of
+<code>x</code>'s type, then <code>x.__add__(y)</code> is called if
+<code>y.__radd__(x)</code> is not implemented. This latter case allows a subclass
+to override its ancestors’ operations (without forcing the object of the subclass
+to always be the left operand).
+</details>
+
+### Object Instantiation and Metaclass
+Python's object instantiation process uses three special methods, `__new__`,
+`__init__`, and `__call__`, involving both *class* and *metaclass*. *Metaclass*
+is a class (or type) of a class, instantiating class just like a class instantiates
+its own objects. The relationships between an instance of a class and a class
+and between a class and a metaclass are illustrated below.
+
+![instance, class, and metaclass relationships](img/class.pdf)
+
+Both class and metaclass supports inheritance. In a class inheritance chain, the
+root is always the `object` class, while in a metaclass inheritance chain, the
+root is always the `type` metaclass. For ease of discussion, we will use the
+following classes and metaclass as an example:
+```python
+class Meta(type):
+    pass
+
+class A(object):
+    pass
+
+class B(A):
+    pass
+
+class C(B, metaclass=Meta):
+    pass
+```
 
 ## Splice in Python
 Python's multi-inheritance programming model enables Splice to modify the behavior
