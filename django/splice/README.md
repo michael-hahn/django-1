@@ -200,7 +200,7 @@ The customization above demonstrates various properties during object instantiat
 2. `C`'s `__new__` removes the keyword argument `level` from `kwargs`. As such,
    The `kwargs` passed to future base classes no longer contains `level`. This is
    particularly useful if `C` anticipates that the argument is unique to `C` and may
-   not be accepted by any of it base classes. The remaining arguments are passed to
+   not be accepted by any of its base classes. The remaining arguments are passed to
    `B`'s `__new__`.
 3. `A`'s base class is `object` whose `__new__` does not take any other arguments
    but the class itself. Therefore, `A` "consumes" `args` and `kwargs` and only
