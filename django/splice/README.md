@@ -104,7 +104,7 @@ instance creation, as we will see next.
 The general workflow of creating a new class instance is illustrated
 below <sup id="a1">[1](#f1)</sup>:
 
-![object creation workflow](img/object_creation.png)
+<img src="./img/object_creation.png" width="300" height="350">
 
 In our example, to create `c_obj`, `Meta`'s `__call__` special method is first
 invoked, which calls `__new__` and `__init__` special methods defined in
