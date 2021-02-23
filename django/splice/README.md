@@ -63,9 +63,12 @@ and a class, and between a class and a metaclass are illustrated below.
 Both class and metaclass support inheritance. In a class inheritance chain, the
 root is always the `object` class, while in a metaclass inheritance chain, the
 root is always the `type` metaclass. For ease of discussion, we will use the
-following classes and metaclass as an example:
+following classes and metaclasses as an example:
 ```python
 class Meta(type):
+    pass
+
+class SubMeta(Meta):
     pass
 
 class A(object):
@@ -74,7 +77,7 @@ class A(object):
 class B(A):
     pass
 
-class C(B, metaclass=Meta):
+class C(B, metaclass=SubMeta):
     pass
 
 c_obj = C()
@@ -99,22 +102,24 @@ method along the MRO so that the overriding method does not simply replace the
 same methods defined in the rest of the MRO. This can be done by using `super()`
 to identify the next base class that defines the same method and then calling the
 base class' method in the subclass. This property is particularly important for
-instance creation, as we will see next.
+instance creation, as we will see next. Metaclass inheritance follows the same
+principles.
 
 The general workflow of creating a new class instance is illustrated
 below <sup id="a1">[1](#f1)</sup>:
 
 <img src="./img/object_creation.png" width="300" height="350">
 
-In our example, to create `c_obj`, `Meta`'s `__call__` special method is first
+In our example, to create `c_obj`, `SubMeta`'s `__call__` special method is first
 invoked, which calls `__new__` and `__init__` special methods defined in
 `C`. <sup id="a2">[2](#f2)</sup> The new instance (i.e., `c_obj`) is eventually
 returned by `__call__`. In our template code above, `__call__` is not defined
-in `Meta`, so it is inherited from `type`. Similarly, Python cannot find `__call__`
-or `__init__` defined in `C`, nor in `B` or `A`, so it follows the MRO and invokes
-those methods defined in `object`. `type` and `object` are Python's default
-instance creation approach. We can customize this process by overriding `__call__`
-in `Meta` or `__new__` and `__init__` in `C`, `B`, and/or `A`.
+in `SubMeta` or `Meta`, so it is inherited from `type`. Similarly, Python cannot
+find `__call__` or `__init__` defined in `C`, nor in `B` or `A`, so it follows the
+MRO and invokes those methods defined in `object`. `type` and `object` are Python's
+default instance creation approach. We can customize this process by overriding
+`__call__` in `SubMeta` and/or `Meta`, or `__new__` and `__init__` in `C`, `B`,
+and/or `A`.
 > `__call__` is only invoked when the callable class object is called (i.e., `C()`).
 > One can bypass `__call__` and construct a new class instance directly by invoking
 > `c_obj = C.__new__(...)` and then `c_obj.__init__(...)`. However, this is not a
@@ -123,20 +128,31 @@ in `Meta` or `__new__` and `__init__` in `C`, `B`, and/or `A`.
 #### Customize `__call__` in Metaclass
 We can override `type`'s `__call__` to customize object instantiation. Generally,
 regardless of customization, `__call__` should invoke `__new__` and `__init__`
-and return the created instance. For example, we can customize `__call__` in `Meta`:
+and return the created instance. For example, we can customize `__call__` in
+`SubMeta` and `Meta`:
 ```python
+class SubMeta(Meta):
+    def __call__(cls, *args, **kwargs):
+        if "level" not in kwargs:
+            kwargs["level"] = 0
+        return super().__call__(cls, *args, **kwargs)
+
 class Meta(type):
     def __call__(cls, *args, **kwargs):
         instance = cls.__new__(cls, *args, **kwargs)
         instance.__init__(*args, **kwargs)
         return instance
 ```
-`Meta`'s `__call__` overrides the default (i.e., `type`) `__call__`, so when
-`c_obj` is being constructed, i.e., `c_obj = C()`, `Meta`'s `__call__` is invoked.
-Notice that `__call__` is what makes the class object `C` callable (i.e., `C()`).
-Similarly, if we define `__call__` in `C`, `c_obj` becomes callable (i.e., we can
-do `c_obj()`). `args` and `kwargs` are the positional and keyword arguments passed
-into `C()`. In our example, they are both empty, but if we do,
+`SubMeta`'s `__call__` overrides the default (i.e., `type`) `__call__`, so when
+`c_obj` is being constructed, i.e., `c_obj = C()`, `SubMeta`'s `__call__` is
+first invoked. The method inserts the `level` keyword argument and gives it a
+default value `0` if it was not provided by `C()`. It then calls `Meta`'s
+`__call__` method, which constructs the `C` instance by invoking `C`'s `__new__`
+and `__init__` methods. Notice that `__call__` is what makes the class object
+`C` callable (i.e., `C()`). Similarly, if we define `__call__` in `C`,
+`c_obj` becomes callable (i.e., we can do `c_obj()`). `args` and `kwargs` are the
+positional and keyword arguments passed into `C()`. In our example, they are both
+empty, but if we do,
 ```python
 c_obj = C("this is an example", 1, level=3, demo=True)
 ```
@@ -157,7 +173,7 @@ hand, has no such requirement, but prematurally terminating the inheritance chai
 of `__init__` methods can lead to incomplete initialization of an instance. For
 example, we can customize `C`, `B`, and `A` as the following:
 ```python
-class C(B, metaclass=Meta):
+class C(B, metaclass=SubMeta):
     def __new__(cls, *args, **kwargs):
         print(kwargs["level"])
         del kwargs["level"]  # remove "level" keyword argument from kwargs
