@@ -60,7 +60,7 @@ and between a class and a metaclass are illustrated below.
 
 ![instance, class, and metaclass relationships](img/class.png)
 
-Both class and metaclass supports inheritance. In a class inheritance chain, the
+Both class and metaclass support inheritance. In a class inheritance chain, the
 root is always the `object` class, while in a metaclass inheritance chain, the
 root is always the `type` metaclass. For ease of discussion, we will use the
 following classes and metaclass as an example:
@@ -76,7 +76,146 @@ class B(A):
 
 class C(B, metaclass=Meta):
     pass
+
+c_obj = C()
 ```
+The relationships between those classes (and the `c_obj` instance) are illustrated
+below.
+
+![example relationships](img/class_example.png)
+
+Note that class inheritance does not need to be linear while metaclass inheritance
+does. We will not complicate our discuss with a diamond inheritance scheme in this
+document. Note also that `type` metaclass is its own type; we can think of `type`
+as the ultimate source of Python's object creation process.
+
+Class inheritance allows methods defined in a class to be inherited from a subclass.
+That is, for example, a method defined in `B` can be invoked by `c_obj` if `C` does
+not define the same method to *override* `B`'s method. Python resolves a method
+in a class's inheritance chain based on the *method resolution order*, or MRO.
+In our example above, when a method is invoked by `c_obj`, Python follows the
+`C->B->A->object` MRO to resolve the method. A method can also invoke the same
+method along the MRO so that the overriding method does not simply replace the
+same methods defined in the rest of the MRO. This can be done by using `super()`
+to identify the next base class that defines the same method and then calling the
+base class' method in the subclass. This property is particularly important for
+instance creation, as we will see next.
+
+The general workflow of creating a new class instance is illustrated
+below <sup id="a1">[1](#f1)</sup>:
+
+![object creation workflow](img/object_creation.png)
+
+In our example, to create `c_obj`, `Meta`'s `__call__` special method is first
+invoked, which calls `__new__` and `__init__` special methods defined in
+`C`. <sup id="a2">[2](#f2)</sup> The new instance (i.e., `c_obj`) is eventually
+returned by `__call__`. In our template code above, `__call__` is not defined
+in `Meta`, so it is inherited from `type`. Similarly, Python cannot find `__call__`
+or `__init__` defined in `C`, nor in `B` or `A`, so it follows the MRO and invokes
+those methods defined in `object`. `type` and `object` are Python's default
+instance creation approach. We can customize this process by overriding `__call__`
+in `Meta` or `__new__` and `__init__` in `C`, `B`, and/or `A`.
+
+#### Customize `__call__` in Metaclass
+We can override `type`'s `__call__` to customize object instantiation. Generally,
+regardless of customization, `__call__` should invoke `__new__` and `__init__`
+and return the created instance. For example, we can customize `__call__` in `Meta`:
+```python
+class Meta(type):
+    def __call__(cls, *args, **kwargs):
+        instance = cls.__new__(cls, *args, **kwargs)
+        instance.__init__(*args, **kwargs)
+        return instance
+```
+`Meta`'s `__call__` overrides the default (i.e., `type`) `__call__`, so when
+`c_obj` is being constructed, i.e., `c_obj = C()`, `Meta`'s `__call__` is invoked.
+Notice that `__call__` is what makes the class object `C` callable (i.e., `C()`).
+Similarly, if we define `__call__` in `C`, `c_obj` becomes callable (i.e., we can
+do `c_obj()`). `args` and `kwargs` are the positional and keyword arguments passed
+into `C()`. In our example, they are both empty, but if we do,
+```python
+c_obj = C("this is an example", 1, level=3, demo=True)
+```
+Then the positional arguments, `args[0] = "this is an example"` and `args[1] = 1`
+and the keyword arguments `kwargs["level"] = 3` and `kwargs["demo"] = True`
+will be passed to `__call__`. In our customized `__call__` implementation, those
+arguments will subsequently be passed to `C`'s `__new__` and `__init__` methods.
+`c_obj` is the `instance` that is returned by `__call__`. Depending on how `C`
+(or its base classes) defines `__new__` and `__init__`, `__call__` might not be
+allowed to pass arbitrary arguments to them. Let's take a closer look at those
+methods.
+
+#### Customize `__new__` and `__init__` in Class
+We can override `object`'s `__new__` and `__init__` to further customize object
+instantiation. For `__new__`, however, we must ensure `object`'s `__new__` is
+eventually called to allocate memory for the new instance. `__init__` on the other
+hand, has no such requirement, but prematurally terminating the inheritance chain
+of `__init__` methods can lead to incomplete initialization of an instance. For
+example, we can customize `C`, `B`, and `A` as the following:
+```python
+class C(B, metaclass=Meta):
+    def __new__(cls, *args, **kwargs):
+        print(kwargs["level"])
+        del kwargs["level"]  # remove "level" keyword argument from kwargs
+        obj = super().__new__(cls, *args, **kwargs)
+        return obj
+
+    def __init__(self, *args, **kwargs):
+        assert len(args) == 2    # both positional arguments are passed to args
+        assert len(kwargs) == 1  # only "demo" argument is passed to kwargs
+        self.demo = kwargs["demo"]
+        super().__init__(*args, **kwargs)
+
+
+class B(A):
+    def __new__(cls, *args, **kwargs):
+        assert len(kwargs) == 1  # kwargs should contain only "demo"
+        obj = super().__new__(cls, *args, **kwargs)
+        return obj
+
+    def __init__(self, *args, **kwargs):
+        assert len(args) == 2
+        assert len(kwargs) == 1
+        self.num = args[1]
+
+
+class A(object):
+    def __new__(cls, *args, **kwargs):
+        assert len(args) == 2
+        assert len(kwargs) == 1
+        print("args[0] = {}, args[1] = {}".format(args[0], args[1]))
+        obj = super().__new__(cls)
+        return obj
+
+    def __init__(self, *args, **kwargs):
+        self.str = args[0]
+
+c_obj = C("this is an example", 1, level=3, demo=True)
+```
+The customization above demonstrates various properties during object instantiation.
+1. When `Meta`'s `__call__` calls `C`'s `__new__`, all arguments given to the `C()`
+   are passed into `__new__`. After `C`'s specific customization is finished, it
+   calls `super()` to invoke `__new__` of its base class (i.e., `B`) before
+   returning the instance.
+2. `C`'s `__new__` removes the keyword argument `level` from `kwargs`. As such,
+   The `kwargs` passed to future base classes no longer contains `level`. This is
+   particularly useful if `C` anticipates that the argument is unique to `C` and may
+   not be accepted by any of it base classes. The remaining arguments are passed to
+   `B`'s `__new__`.
+3. `A`'s base class is `object` whose `__new__` does not take any other arguments
+   but the class itself. Therefore, `A` "consumes" `args` and `kwargs` and only
+   passes `cls` to `super()`.
+4. From `Meta`'s `__call__`, we see that `args` and `kwargs` are subsequently passed
+   to `__init__`. Since `C` defines an `__init__`, that's the method that is invoked
+   after `__new__`. Note that since `kwargs` has been modified in `__new__`,
+   `__init__` gets only one keyword argument (i.e., `demo`).
+5. `C`'s `__init__` sets an attribute for the instance (i.e., `self.demo`) and uses
+   `super()` to call `B`'s `__init__`. However, `B`'s `__init__` does not invoke
+   `super().__init__` at all, so `A`'s `__init__` will never be called in this case.
+
+The call graph to construct `c_obj` is illustrated below.
+
+![call graph](img/call_graph.png)
 
 ## Splice in Python
 Python's multi-inheritance programming model enables Splice to modify the behavior
@@ -160,7 +299,7 @@ below) when methods manipulate the objects, but 3) otherwise preserve the behavi
 of the existing class. For clarity of exposition, we henceforth call the interposed
 class a Splice-managed class and prefix all Splice-managed class names with `Splice`.
 For example, a Splice-managed `int` class is denoted as `SpliceInt`, and it
-interposes on the built-in `int` type.<sup id="a1">[1](#f1)</sup>
+interposes on the built-in `int` type.<sup id="a3">[3](#f3)</sup>
 For the programmer, defensive programming means that the programmer should always
 check the attributes of an object before meaningfully using the object (e.g.,
 displaying the value of the object to a client's browser). Splice also assists
@@ -250,11 +389,10 @@ the existing class (`int`) so that the subclass (`SpliceInt`) 1) mimics the
 behavior of the existing class, while 2) propagating untrustiness/synthesis.
 `SpliceMixin` does so through the `__init_subclass__` special method. It iterates
 over all methods defined in the subclass and all of its base classes following the
-MRO. MRO, or *method resolution order*, is the way Python resolves a method in a
-class's inheritance chain. `SpliceMixin` decorates those methods and makes them
-the attributes of the Splice-managed subclass directly; therefore, they are no longer
-resolved from the base classes in which they were originally defined. The iteration
-process adheres to the following order:
+MRO. `SpliceMixin` decorates those methods and makes them the attributes of the
+Splice-managed subclass directly; therefore, they are no longer resolved from the
+base classes in which they were originally defined. The iteration process adheres
+to the following order:
 1. `SpliceMixin` first considers all callable methods defined in the Splice-managed
    subclass. For an application-specific class, the subclass is usually just a
    declaration without any methods defined. However, the programmer can leverage
@@ -429,7 +567,7 @@ not just `str`.
 Splice considers string (i.e., `str()`, `__str__`, and the similar `repr()`,
 `__repr__`, `format()`, and `__format__`) to be a trusted sink; therefore,
 Splice raises an error if input to these functions/methods is not
-trusted.<sup id="a2">[2](#f2)</sup> This is different from how Splice manages
+trusted.<sup id="a4">[4](#f4)</sup> This is different from how Splice manages
 other object creation methods.
 
 Not all binary arithmetic methods have a corresponding reflected (swapped) method.
@@ -593,13 +731,20 @@ Trusted data sinks are locations where only non-synthesized data is allowed.
 :lock_with_ink_pen:
 
 # Footnotes
-<b id="f1">1.</b> In a Splice-managed Python program, *all* classes should be
+<b id="f1">1.</b> Credit to
+[this article](https://blog.ionelmc.ro/2015/02/09/understanding-python-metaclasses/#putting-it-all-together). [↩](#a1)
+
+<b id="f2">2.</b> We omit details on how a class is created by the metaclass, which
+involves a metaclass specific special method `__prepare__` and the `__new__` and
+`__init__` special method defined in the metaclass.
+
+<b id="f3">3.</b> In a Splice-managed Python program, *all* classes should be
 managed (i.e., replaced) by Splice, including built-in, library, and
 application-specific (developer-defined) classes, for untrustiness/synthesis
-to propagate properly. [↩](#a1)
+to propagate properly. [↩](#a3)
 
-<b id="f2">2.</b> This is a design choice we made specifically for Django,
+<b id="f4">4.</b> This is a design choice we made specifically for Django,
 because Django formats HTTP strings before rendering them to the client. Since
 string formatting is a trusted sink, all content delivered to the client then
 becomes safe to be rendered. This design choice can be easily adjusted so that
-string follows Rule 1 just like other data types. [↩](#a2)
+string follows Rule 1 just like other data types. [↩](#a4)
