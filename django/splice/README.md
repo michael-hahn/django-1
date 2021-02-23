@@ -53,10 +53,10 @@ to always be the left operand).
 
 ### Object Instantiation and Metaclass
 Python's object instantiation process uses three special methods, `__new__`,
-`__init__`, and `__call__`, involving both *class* and *metaclass*. *Metaclass*
-is a class (or type) of a class, instantiating class just like a class instantiates
-its own objects. The relationships between an instance of a class and a class
-and between a class and a metaclass are illustrated below.
+`__init__`, and `__call__`, involving both *class* and *metaclass*. Metaclass
+is the class (or type) of a class. It can instantiate new classes just like a class
+can instantiate new class instances. The relationships between a class instance
+and a class, and between a class and a metaclass are illustrated below.
 
 ![instance, class, and metaclass relationships](img/class.png)
 
@@ -115,6 +115,10 @@ or `__init__` defined in `C`, nor in `B` or `A`, so it follows the MRO and invok
 those methods defined in `object`. `type` and `object` are Python's default
 instance creation approach. We can customize this process by overriding `__call__`
 in `Meta` or `__new__` and `__init__` in `C`, `B`, and/or `A`.
+> `__call__` is only invoked when the callable class object is called (i.e., `C()`).
+> One can bypass `__call__` and construct a new class instance directly by invoking
+> `c_obj = C.__new__(...)` and then `c_obj.__init__(...)`. However, this is not a
+> common practice.
 
 #### Customize `__call__` in Metaclass
 We can override `type`'s `__call__` to customize object instantiation. Generally,
