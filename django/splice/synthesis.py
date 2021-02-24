@@ -1,4 +1,13 @@
-"""Synthesis classes."""
+"""
+Synthesis classes.
+
+All values added to a Z3 constraint solver should be converted
+to a regular Python type using to_trusted(), instead of using the
+Splice type since Z3 might perform type coercion through e.g.,
+str() which violates our policy. When using to_trusted(),
+'forced' argument is set to be True because it is OK to synthesize
+a value using constraints that are also synthesized.
+"""
 
 from z3 import Solver, sat
 from z3 import String, StringVal, Concat
@@ -10,7 +19,8 @@ from z3 import And, Or, If
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from django.splice.untrustedtypes import UntrustedInt, UntrustedFloat, UntrustedStr, UntrustedDatetime
+from django.splice.splice import to_trusted
+from django.splice.splicetypes import SpliceInt, SpliceFloat, SpliceStr, SpliceDatetime
 
 
 class Synthesizer(ABC):
@@ -30,9 +40,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var < v)
+                self.solver.add(self.var < to_trusted(v, True))
         else:
-            self.solver.add(self.var < values)
+            self.solver.add(self.var < to_trusted(values, True))
 
     def gt_constraint(self, values, **kwargs):
         """
@@ -45,9 +55,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var > v)
+                self.solver.add(self.var > to_trusted(v, True))
         else:
-            self.solver.add(self.var > values)
+            self.solver.add(self.var > to_trusted(values, True))
 
     def eq_constraint(self, func, value, **kwargs):
         """
@@ -65,7 +75,7 @@ class Synthesizer(ABC):
         Note that func can return self.var itself to
         create a trivial equal-to constraint.
         """
-        self.solver.add(func(self.var, **kwargs) == value)
+        self.solver.add(func(self.var, **kwargs) == to_trusted(value, True))
 
     def le_constraint(self, values, **kwargs):
         """
@@ -79,9 +89,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var <= v)
+                self.solver.add(self.var <= to_trusted(v, True))
         else:
-            self.solver.add(self.var <= values)
+            self.solver.add(self.var <= to_trusted(values, True))
 
     def ge_constraint(self, values, **kwargs):
         """
@@ -95,9 +105,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var >= v)
+                self.solver.add(self.var >= to_trusted(v, True))
         else:
-            self.solver.add(self.var >= values)
+            self.solver.add(self.var >= to_trusted(values, True))
 
     def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
         """
@@ -197,14 +207,14 @@ class IntSynthesizer(Synthesizer):
     @staticmethod
     def to_python(value):
         if value is not None:
-            return UntrustedInt(value.as_long(), synthesized=True)
+            return SpliceInt(value.as_long(), trusted=False, synthesized=True)
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return UntrustedInt(value, synthesized=True)
+            return SpliceInt(value, trusted=False, synthesized=True)
         else:
             return None
 
@@ -220,14 +230,14 @@ class FloatSynthesizer(Synthesizer):
             fraction_value = value.as_fraction()
             # Lose precision when casting into float
             float_value = float(fraction_value.numerator) / float(fraction_value.denominator)
-            return UntrustedFloat(float_value, synthesized=True)
+            return SpliceFloat(float_value, trusted=False, synthesized=True)
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return UntrustedFloat(value, synthesized=True)
+            return SpliceFloat(value, trusted=False, synthesized=True)
         else:
             return None
 
@@ -244,7 +254,7 @@ class BitVecSynthesizer(Synthesizer):
     @staticmethod
     def to_python(value):
         if value is not None:
-            return UntrustedInt(value.as_long(), synthesized=True)
+            return SpliceInt(value.as_long(), trusted=False, synthesized=True)
         else:
             return None
 
@@ -252,7 +262,7 @@ class BitVecSynthesizer(Synthesizer):
     def simple_synthesis(value):
         """Python can automatically convert a bit vector to int."""
         if value is not None:
-            return UntrustedInt(value, synthesized=True)
+            return SpliceInt(value, trusted=False, synthesized=True)
         else:
             return None
 
@@ -337,7 +347,7 @@ class StrSynthesizer(Synthesizer):
             # False so synthesis always return 'unsat'.
             self.solver.add(False)
         else:
-            template = self._lt_constraint(value, **kwargs)
+            template = self._lt_constraint(to_trusted(value, True), **kwargs)
             self.solver.add(InRe(self.var, template))
 
     def le_constraint(self, value, **kwargs):
@@ -345,6 +355,7 @@ class StrSynthesizer(Synthesizer):
         The same rules as in lt_constraint() except that
         the synthesized string can be the same as value.
         """
+        value = to_trusted(value, True)
         lt_template = self._lt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, lt_template), InRe(self.var, eq_template)))
@@ -357,9 +368,9 @@ class StrSynthesizer(Synthesizer):
         lt_constraint() as the public API, not this function.
         'value' should never be an empty string in this function.
         """
-        if isinstance(value, UntrustedStr):
-            # Get str type value if value is UntrustedStr
-            value = value.data
+        if isinstance(value, SpliceStr):
+            # Get str type value if value is SpliceStr
+            value = to_trusted(value, True)
         # Create a regular expression template for synthesis
         bound_length = len(value)
         offset = 0
@@ -417,7 +428,7 @@ class StrSynthesizer(Synthesizer):
         0 to offset would be the same in synthesized string as in value
         (if offset < the length of the value). Offset is by default 0.
         """
-        template = self._gt_constraint(value, **kwargs)
+        template = self._gt_constraint(to_trusted(value, True), **kwargs)
         self.solver.add(InRe(self.var, template))
 
     def ge_constraint(self, value, **kwargs):
@@ -425,6 +436,7 @@ class StrSynthesizer(Synthesizer):
         The same rules as in gt_constraint() except that
         the synthesized string can be the same as value.
         """
+        value = to_trusted(value, True)
         gt_template = self._gt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, gt_template), InRe(self.var, eq_template)))
@@ -436,9 +448,9 @@ class StrSynthesizer(Synthesizer):
         for more detailed description. User should always call
         gt_constraint() as the public API, not this function.
         """
-        if isinstance(value, UntrustedStr):
-            # Get str type value if value is UntrustedStr
-            value = value.data
+        if isinstance(value, SpliceStr):
+            # Get str type value if value is SpliceStr
+            value = to_trusted(value, True)
         bound_length = len(value)
         if bound_length == 0:
             # If value is an empty string, any non-empty string will do
@@ -500,7 +512,7 @@ class StrSynthesizer(Synthesizer):
         # front of it must be NULL as well.
         for i in range(len(chars) - 1):
             self.solver.add(If(chars[i+1] == 0, chars[i] == 0, True))
-        self.solver.add(func(chars, **kwargs) == value)
+        self.solver.add(func(chars, **kwargs) == to_trusted(value, True))
 
     def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
         """
@@ -533,16 +545,16 @@ class StrSynthesizer(Synthesizer):
                     if value[i].as_long() > 0:
                         # chr converts integer to ASCII character
                         reconstruct_str += chr(value[i].as_long())
-                return UntrustedStr(reconstruct_str, synthesized=True)
+                return SpliceStr(reconstruct_str, trusted=False, synthesized=True)
             else:
-                return UntrustedStr(value.as_string(), synthesized=True)
+                return SpliceStr(value.as_string(), trusted=False, synthesized=True)
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return UntrustedStr(value, synthesized=True)
+            return SpliceStr(value, trusted=False, synthesized=True)
         else:
             return None
 
@@ -552,6 +564,7 @@ class DatetimeSynthesizer(FloatSynthesizer):
     @staticmethod
     def to_float(value):
         """Convert value (a datetime object) to float."""
+        value = to_trusted(value, True)
         return value.timestamp()
 
     @staticmethod
@@ -572,21 +585,22 @@ class DatetimeSynthesizer(FloatSynthesizer):
             minute = dt.minute
             second = dt.second
             microsecond = dt.microsecond
-            return UntrustedDatetime(year=year,
-                                     month=month,
-                                     day=day,
-                                     hour=hour,
-                                     minute=minute,
-                                     second=second,
-                                     microsecond=microsecond,
-                                     synthesized=True)
+            return SpliceDatetime(year=year,
+                                  month=month,
+                                  day=day,
+                                  hour=hour,
+                                  minute=minute,
+                                  second=second,
+                                  microsecond=microsecond,
+                                  trusted=False,
+                                  synthesized=True)
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return UntrustedDatetime(value, synthesized=True)
+            return DatetimeSynthesizer.to_python(DatetimeSynthesizer.to_float(value))
         else:
             return None
 
@@ -600,15 +614,15 @@ def init_synthesizer(value, vectorized=False):
     # TODO: We can probably automate this process in __init__.py
     if vectorized:
         return BitVecSynthesizer()
-    elif isinstance(value, UntrustedInt):       # Note that int is included
+    elif isinstance(value, SpliceInt):       # Note that int is included
         return IntSynthesizer()
-    elif isinstance(value, UntrustedStr):       # Note that str is *not* included
+    elif isinstance(value, SpliceStr):       # Note that str is *not* included
         return StrSynthesizer()
-    elif isinstance(value, UntrustedFloat):     # Note that float is included
+    elif isinstance(value, SpliceFloat):     # Note that float is included
         return FloatSynthesizer()
     #####################################################
     # TODO: Add more casting here for new untrusted types
-    elif isinstance(value, UntrustedDatetime):
+    elif isinstance(value, SpliceDatetime):
         return DatetimeSynthesizer()
     #####################################################
     else:
@@ -723,8 +737,8 @@ def str_synthesizer_test():
     assert str_val < "Luke", "{val} should be smaller than 'Luke', but it is not.".format(val=str_val)
     assert str_val > "Blair", "{val} should be larger than 'Blair', but it is not.".format(val=str_val)
     synthesizer.reset_constraints()
-    untrusted_str = UntrustedStr("Luke")
-    synthesizer.eq_constraint(UntrustedStr.custom_hash, untrusted_str.__hash__())
+    untrusted_str = SpliceStr("Luke")
+    synthesizer.eq_constraint(SpliceStr.custom_hash, untrusted_str.__hash__())
     str_val = synthesizer.to_python(synthesizer.value)
     assert str_val.__hash__() == untrusted_str.__hash__(), "{synthesized_val} should have the same hashed value " \
                                                            "as {val}".format(synthesized_val=str_val,
