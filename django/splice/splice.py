@@ -88,16 +88,54 @@ def contains_untrusted_arguments(*args, **kwargs):
 
 def to_trusted(value, forced=False):
     """
-    Explicitly coerce a value to be trusted, if the value is splice-aware
-    by calling value's to_trusted() method. Conversion results in a
-    RuntimeError if the untrusted value is synthesized, unless 'forced' is
-    set to be True. If 'forced' is True, conversion always works. If value
-    is not splice-aware, the value is convert to a splice-aware object.
+    Explicitly coerce an object to be trusted, if the object is splice-aware
+    by calling object's to_trusted() method. Conversion results in a
+    RuntimeError if the untrusted object is synthesized, unless 'forced' is
+    set to be True. If 'forced' is True, conversion always works. If object
+    is not splice-aware, the object is convert to a splice-aware object.
     """
     if isinstance(value, SpliceMixin):
         return value.to_trusted(forced)
     else:
         return SpliceMixin.to_splice(value, True, False)
+
+
+def untrusted(func):
+    """
+    A function decorator that makes the original function (that
+    may not be splice-aware) return untrusted object if defined.
+    Note that the object is only set to be untrusted but not
+    synthesized; therefore, do not use this decorator if the
+    return object might be synthesized!
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        res = func(*args, **kwargs)
+        # Some quick return
+        if res is NotImplemented or res is None:
+            return res
+        return to_untrusted(res)
+
+    return wrapper
+
+
+def to_untrusted(value, synthesized=False):
+    """
+    Explicitly coerce an object to be untrusted, if the object is splice-aware
+    by setting its trusted flat to False. If object is not splice-aware, the
+    object is convert to a splice-aware object. Optionally, this function can
+    set the object to also be synthesized.
+        """
+    if isinstance(value, SpliceMixin):
+        value.trusted = False
+        # Only set a non-synthesized object to synthesized if
+        # synthesized argument is set to be True.
+        if value.synthesized is not True and synthesized:
+            value.synthesized = synthesized
+        return value
+    else:
+        return SpliceMixin.to_splice(value, False, synthesized)
 
 
 class MetaSplice(type):
@@ -204,19 +242,19 @@ class SpliceMixin(metaclass=MetaSplice):
         SpliceMixin.to_splice_cls(cls)
         SpliceMixin.register(cls)
 
-    def __str__(self):
-        if not self.trusted:
-            raise TypeError("cannot use str() or __str__ to coerce an untrusted value to str. "
-                            "Use to_trusted() instead.")
-        else:
-            return SpliceMixin.registered_cls["str"](super().__str__())
-
-    def __repr__(self):
-        if not self.trusted:
-            raise TypeError("cannot use repr() or __repr__ to coerce an untrusted value to str. "
-                            "Use to_trusted() instead.")
-        else:
-            return SpliceMixin.registered_cls["str"](super().__repr__())
+    # def __str__(self):
+    #     if not self.trusted:
+    #         raise TypeError("cannot use str() or __str__ to coerce an untrusted value to str. "
+    #                         "Use to_trusted() instead.")
+    #     else:
+    #         return SpliceMixin.registered_cls["str"](super().__str__())
+    #
+    # def __repr__(self):
+    #     if not self.trusted:
+    #         raise TypeError("cannot use repr() or __repr__ to coerce an untrusted value to str. "
+    #                         "Use to_trusted() instead.")
+    #     else:
+    #         return SpliceMixin.registered_cls["str"](super().__repr__())
 
     def __format__(self, format_spec):
         if not self.trusted:
@@ -230,17 +268,17 @@ class SpliceMixin(metaclass=MetaSplice):
         for x in super().__iter__():
             yield SpliceMixin.to_splice(x, self.trusted, self.synthesized)
 
-    # def __deepcopy__(self, memo):
-    #     """
-    #     Override __deepcopy__ so that when deepcopy() is invoked in to_splice_cls(),
-    #     this method is called. Ref: https://stackoverflow.com/a/15774013/9632613.
-    #     """
-    #     cls = self.__class__
-    #     result = cls.__new__(cls)
-    #     memo[id(self)] = result
-    #     for k, v in self.__dict__.items():
-    #         setattr(result, k,  copy.deepcopy(v, memo))
-    #     return result
+    def __deepcopy__(self, memo):
+        """
+        Override __deepcopy__ so that when deepcopy() is invoked in to_splice_cls(),
+        this method is called. Ref: https://stackoverflow.com/a/15774013/9632613.
+        """
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     @staticmethod
     def to_splice(value, trusted, synthesized):
