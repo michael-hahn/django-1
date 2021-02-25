@@ -255,13 +255,13 @@ class SpliceMixin(metaclass=MetaSplice):
     #                         "Use to_trusted() instead.")
     #     else:
     #         return SpliceMixin.registered_cls["str"](super().__repr__())
-
-    def __format__(self, format_spec):
-        if not self.trusted:
-            raise TypeError("cannot use format() or __format__ to coerce an untrusted value to str. "
-                            "Use to_trusted() instead.")
-        else:
-            return SpliceMixin.registered_cls["str"](super().__format__(format_spec))
+    #
+    # def __format__(self, format_spec):
+    #     if not self.trusted:
+    #         raise TypeError("cannot use format() or __format__ to coerce an untrusted value to str. "
+    #                         "Use to_trusted() instead.")
+    #     else:
+    #         return SpliceMixin.registered_cls["str"](super().__format__(format_spec))
 
     def __iter__(self):
         """Define __iter__ so the iterator returns a splice-aware value."""
