@@ -125,6 +125,13 @@ and/or `A`.
 > `c_obj = C.__new__(...)` and then `c_obj.__init__(...)`. However, this is not a
 > common practice.
 
+> For primitive types, Python provides additional special methods that can be invoked
+> to create the instance. For example, `__int__` can be defined in the `C` class to
+> convert an `C` instance to an `int` instance. When `int(c_obj)` runs, `c_obj` will
+> invoke the `__int__` special method defined in `C`. Other primitive types have
+> their own special method as well, e.g., `__str__` for `str`, `__float__` for
+> `float`, `__complex__` for `complex`, etc.
+
 #### Customize `__call__` in Metaclass
 We can override `type`'s `__call__` to customize object instantiation. Generally,
 regardless of customization, `__call__` should invoke `__new__` and `__init__`
@@ -584,11 +591,15 @@ re-classing the objects returned by the iterator to be the Splice-managed class.
 Note that, Splice interposes on the iteration behavior of *all* iterable classes,
 not just `str`.
 
-Splice considers string (i.e., `str()`, `__str__`, and the similar `repr()`,
-`__repr__`, `format()`, and `__format__`) to be a trusted sink; therefore,
-Splice raises an error if input to these functions/methods is not
-trusted.<sup id="a4">[4](#f4)</sup> This is different from how Splice manages
-other object creation methods.
+[comment]: <> (Splice considers string &#40;i.e., `str&#40;&#41;`, `__str__`, and the similar `repr&#40;&#41;`,)
+
+[comment]: <> (`__repr__`, `format&#40;&#41;`, and `__format__`&#41; to be a trusted sink; therefore,)
+
+[comment]: <> (Splice raises an error if input to these functions/methods is not)
+
+[comment]: <> (trusted.<sup id="a4">[4]&#40;#f4&#41;</sup> This is different from how Splice manages)
+
+[comment]: <> (other object creation methods.)
 
 Not all binary arithmetic methods have a corresponding reflected (swapped) method.
 As specified in Python's data model, it is important that the emulation
@@ -763,8 +774,12 @@ managed (i.e., replaced) by Splice, including built-in, library, and
 application-specific (developer-defined) classes, for untrustiness/synthesis
 to propagate properly. [↩](#a3)
 
-<b id="f4">4.</b> This is a design choice we made specifically for Django,
-because Django formats HTTP strings before rendering them to the client. Since
-string formatting is a trusted sink, all content delivered to the client then
-becomes safe to be rendered. This design choice can be easily adjusted so that
-string follows Rule 1 just like other data types. [↩](#a4)
+[comment]: <> (<b id="f4">4.</b> This is a design choice we made specifically for Django,)
+
+[comment]: <> (because Django formats HTTP strings before rendering them to the client. Since)
+
+[comment]: <> (string formatting is a trusted sink, all content delivered to the client then)
+
+[comment]: <> (becomes safe to be rendered. This design choice can be easily adjusted so that)
+
+[comment]: <> (string follows Rule 1 just like other data types. [↩]&#40;#a4&#41;)
