@@ -32,7 +32,12 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.splice.untrustedtypes import add_synthesis
+from django.splice.splicetypes import SpliceInt as int
+from django.splice.splicetypes import SpliceFloat as float
+from django.splice.splicetypes import SpliceStr as str
+from django.splice.splicetypes import SpliceDecimal as Decimal
+from django.splice.splice import untrusted
+
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
@@ -222,7 +227,7 @@ class CharField(Field):
             self.validators.append(validators.MaxLengthValidator(int(max_length)))
         self.validators.append(validators.ProhibitNullCharactersValidator())
 
-    @add_synthesis
+    @untrusted
     def to_python(self, value):
         """Return a string."""
         if value not in self.empty_values:
@@ -263,7 +268,7 @@ class IntegerField(Field):
         if min_value is not None:
             self.validators.append(validators.MinValueValidator(min_value))
 
-    @add_synthesis
+    @untrusted
     def to_python(self, value):
         """
         Validate that int() can be called on the input. Return the result
@@ -296,7 +301,7 @@ class FloatField(IntegerField):
         'invalid': _('Enter a number.'),
     }
 
-    @add_synthesis
+    @untrusted
     def to_python(self, value):
         """
         Validate that float() can be called on the input. Return the result
@@ -337,7 +342,7 @@ class DecimalField(IntegerField):
         super().__init__(max_value=max_value, min_value=min_value, **kwargs)
         self.validators.append(validators.DecimalValidator(max_digits, decimal_places))
 
-    @add_synthesis
+    @untrusted
     def to_python(self, value):
         """
         Validate that the input is a decimal number. Return a Decimal
@@ -461,7 +466,6 @@ class DateTimeField(BaseTemporalField):
             value = to_current_timezone(value)
         return value
 
-    @add_synthesis
     def to_python(self, value):
         """
         Validate that the input can be converted to a datetime. Return a
