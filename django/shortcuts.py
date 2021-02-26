@@ -10,10 +10,7 @@ from django.template import loader
 from django.urls import NoReverseMatch, reverse
 from django.utils.functional import Promise
 
-from django.splice.middleware import check_context
 
-
-@check_context
 def render(request, template_name, context=None, content_type=None, status=None, using=None):
     """
     Return a HttpResponse whose content is filled with the result of calling
