@@ -1,6 +1,8 @@
 """Splice middleware to enforce Django responses to be trusted sinks."""
 
 from django.splice.splice import is_synthesized
+from django.db.models.query import QuerySet
+from django.db.models import Model
 
 
 def check_streaming_content(content):
@@ -43,8 +45,6 @@ class SpliceMiddleware(object):
             response.streaming_content = check_streaming_content(response.streaming_content)
         else:
             # assert type(response.content) is SpliceBytes
-            print(response.content)
-            print(type(response.content))
             if is_synthesized(response.content):
                 raise ValueError("The response {value} is a synthesized data and "
                                  "cannot pass through Django's SpliceMiddleware, "
@@ -58,6 +58,7 @@ class SpliceMiddleware(object):
             response._container = [bytes(response.content)]
         return response
 
+    # FIXME: __call__ should probably handle the template case if context-to-bytestring preserves Splice tags!
     def process_template_response(self, request, response):
         """
         request is an HttpRequest object. response is the *TemplateResponse* object (or equivalent)
@@ -79,7 +80,18 @@ class SpliceMiddleware(object):
         """
         # response.context_data is the context data to be used when rendering the template, which must be a dict
         for key, value in response.context_data.items():
-            if is_synthesized(value):
+            # The context might contain QuerySets from database queries
+            if isinstance(value, QuerySet):
+                for v in value:
+                    # v is an instance of a Model, so we should go through all of its model fields
+                    if isinstance(v, Model):
+                        for field in v._meta.fields:
+                            field_value = getattr(v, field.name)
+                            if is_synthesized(field_value):
+                                raise ValueError("{value} is a synthesized field and cannot "
+                                                 "pass through a trusted sink".format(value=field.name))
+            # For other types of value
+            elif is_synthesized(value):
                 raise ValueError("{value} is a synthesized value and cannot "
                                  "pass through a trusted sink".format(value=value))
         return response
