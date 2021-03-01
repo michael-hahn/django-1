@@ -141,13 +141,10 @@ def to_untrusted(value, synthesized=False):
 class MetaSplice(type):
     """
     Metaclass to override __call__ to remove trusted and synthesized keyword parameters.
-    We need to do this because if we use type's __call__, all kwargs will be passed to
-    __init__ but not all __init__ that we inherit from can handle them properly! We also
-    set the two Splice related attributes here so as not to override __init__. This is
-    because some classes may not be designed for inheritance so if we override __init__
-    and call super().__init__, it can get all funky. A trusted flag is used to identify
-    if an object is trusted and a synthesized flag to identify if an *untrusted* object
-    is synthesized. An object *cannot* be both trusted and synthesized.
+    We can probably also do this in __new__ instead (and set the trusted and synthesized
+    attributes in __new__ as well). A trusted flag is used to identify if an object is
+    trusted and a synthesized flag to identify if an *untrusted* object is synthesized.
+    An object *cannot* be both trusted and synthesized.
     """
 
     def __call__(cls, *args, **kwargs):
