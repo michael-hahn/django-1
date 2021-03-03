@@ -16,7 +16,7 @@ from django.utils.translation import gettext as _
 
 from .renderers import get_default_renderer
 
-from django.splice.untrustedtypes import UntrustedMixin, synthesis_debug
+from django.splice.splice import SpliceMixin
 
 __all__ = ('BaseForm', 'Form')
 
@@ -408,7 +408,6 @@ class BaseForm:
             if cleaned_data is not None:
                 self.cleaned_data = cleaned_data
 
-    @synthesis_debug
     def _post_clean(self):
         """
         An internal hook for performing additional cleaning after form cleaning
@@ -422,12 +421,13 @@ class BaseForm:
         # and therefore cannot be called during the iteration.
         # Thus, we immediately raise ValidationError().
         for name, value in self.cleaned_data.items():
-            if not isinstance(value, UntrustedMixin):
-                # TODO: Currently not all form values are converted to untrusted values, use pass
+            if not isinstance(value, SpliceMixin):
+                # TODO: Currently not all form values are converted to Splice values, use pass
                 # raise ValidationError(_("{name} has value {value} of (trusted) type {type}'"
                 #                         .format(name=name, value=value, type=type(value))))
                 pass
             else:
+                print("({}) {} (Taints: {})".format(type(value), name, value.taints))
                 #  NOTE: to_trusted() 'force' flag is False and it
                 #  is OK because we will never need to forcefully
                 #  convert an untrusted (and synthesized) value to
