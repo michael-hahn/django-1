@@ -5,7 +5,7 @@ import copy
 
 from django.forms.forms import DeclarativeFieldsMetaclass
 from django.splice.backends.base import BaseStruct
-from django.splice.untrustedtypes import UntrustedMixin, is_synthesized
+from django.splice.splice import is_synthesized
 
 
 def trusted_struct(cls):

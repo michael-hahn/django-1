@@ -1,7 +1,7 @@
 """Redis IntSet and Synthesizable IntSet."""
 
 from django.splice.synthesis import init_synthesizer
-from django.splice.untrustedtypes import UntrustedInt
+from django.splice.splicetypes import SpliceInt
 
 
 class IntSet(object):
@@ -224,18 +224,19 @@ class SynthesizableIntSet(IntSet):
     def __getitem__(self, pos, encoding):
         """
         Override IntSet's __getitem__ method because
-        we must return an UntrustedInt instead of int
+        we must return a SpliceInt instead of int
         and we must check if the returned value should
         have synthesized flag set or not.
         """
-        # All values in self._contents should be of type UntrustedInt
+        # All values in self._contents should be of type SpliceInt
         # If any value is synthesized, the entire value should be synthesized
         synthesized = False
         for i in range(pos*encoding, (pos+1)*encoding):
             synthesized = synthesized or self._contents[i].synthesized
-        return UntrustedInt(int.from_bytes(self._contents[pos*encoding:(pos+1)*encoding],
-                                           byteorder='big', signed=True),
-                            synthesized=synthesized)
+        return SpliceInt(int.from_bytes(self._contents[pos*encoding:(pos+1)*encoding],
+                                        byteorder='big', signed=True),
+                         trusted=False,
+                         synthesized=synthesized)
 
     def __setitem__(self, pos, value, encoding):
         """
@@ -248,7 +249,7 @@ class SynthesizableIntSet(IntSet):
         during the conversion.
         """
         synthesized = value.synthesized
-        byte_arr = [UntrustedInt(i, synthesized=synthesized)
+        byte_arr = [SpliceInt(i, trusted=False, synthesized=synthesized)
                     for i in value.to_bytes(self._encoding, byteorder='big', signed=True)]
         for i in range(pos*encoding, (pos+1)*encoding):
             self._contents[i] = byte_arr[i-pos*encoding]

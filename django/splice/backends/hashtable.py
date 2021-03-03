@@ -2,7 +2,7 @@
 
 from django.splice.structures.hashtable import SynthesizableHashTable, SynthesizableDict
 from django.splice.backends.base import BaseStruct
-from django.splice.untrustedtypes import UntrustedMixin, to_untrusted
+from django.splice.splice import SpliceMixin, to_untrusted
 
 
 class BaseHashTable(BaseStruct):
@@ -24,22 +24,22 @@ class BaseHashTable(BaseStruct):
             raise ValueError("a (key, value) tuple is expected, but got {}".format(data))
 
     # TODO: hash is used to identify items, but since we modified __hash__ for
-    #  UntrustedStr, a str can have the same value as an UntrustedStr but they
+    #  SpliceStr, a str can have the same value as an SpliceStr but they
     #  will have different hash values. We use a hack here to change a str key
-    #  to an UntrustedStr key, but __hash__ is ultimate proper fix (BaseDict too)
+    #  to a SpliceStr key, but __hash__ is ultimate proper fix (BaseDict too)
     def get(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         return self.struct.__getitem__(key)
 
     def delete(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         return self.struct.__delitem__(key)
 
     def synthesize(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         return self.struct.synthesize(key)
 
     def __iter__(self):
@@ -65,18 +65,18 @@ class BaseDict(BaseStruct):
             raise ValueError("a (key, value) tuple is expected, but got {}".format(data))
 
     def get(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         return self.struct[key]
 
     def delete(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         del self.struct[key]
 
     def synthesize(self, key):
-        if not isinstance(key, UntrustedMixin):
-            key = to_untrusted(key, synthesized=False)
+        if not isinstance(key, SpliceMixin):
+            key = to_untrusted(key)
         return self.struct.synthesize(key)
 
     def __iter__(self):

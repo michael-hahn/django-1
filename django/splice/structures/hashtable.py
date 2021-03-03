@@ -2,7 +2,7 @@
 
 from collections import UserDict
 
-from django.splice.untrustedtypes import UntrustedInt, UntrustedStr
+from django.splice.splicetypes import SpliceInt, SpliceStr
 from django.splice.synthesis import IntSynthesizer, StrSynthesizer
 
 
@@ -96,13 +96,13 @@ class SynthesizableHashTable(HashTable):
             if key == k:
                 synthesize_type = type(key).__name__
                 # Unlike other data structures, hashtable can
-                # take only UntrustedInt or UntrustedStr as keys
-                if synthesize_type == 'UntrustedInt':
+                # take only SpliceInt or SpliceStr as keys
+                if synthesize_type == 'SpliceInt':
                     synthesizer = IntSynthesizer()
-                    synthesizer.eq_constraint(UntrustedInt.custom_hash, key.__hash__())
-                elif synthesize_type == 'UntrustedStr':
+                    synthesizer.eq_constraint(SpliceInt.custom_hash, key.__hash__())
+                elif synthesize_type == 'SpliceStr':
                     synthesizer = StrSynthesizer()
-                    synthesizer.eq_constraint(UntrustedStr.custom_hash, key.__hash__())
+                    synthesizer.eq_constraint(SpliceStr.custom_hash, key.__hash__())
                 else:
                     raise NotImplementedError("We cannot synthesize value of type "
                                               "{type} yet".format(type=synthesize_type))
@@ -145,13 +145,13 @@ class SynthesizableDict(UserDict):
 
         synthesize_type = type(key).__name__
         # Unlike other data structures, hashtable can
-        # take only UntrustedInt or UntrustedStr as keys
-        if synthesize_type == 'UntrustedInt':
+        # take only SpliceInt or SpliceStr as keys
+        if synthesize_type == 'SpliceInt':
             synthesizer = IntSynthesizer()
-            synthesizer.eq_constraint(UntrustedInt.custom_hash, key.__hash__())
-        elif synthesize_type == 'UntrustedStr':
+            synthesizer.eq_constraint(SpliceInt.custom_hash, key.__hash__())
+        elif synthesize_type == 'SpliceStr':
             synthesizer = StrSynthesizer()
-            synthesizer.eq_constraint(UntrustedStr.custom_hash, key.__hash__())
+            synthesizer.eq_constraint(SpliceStr.custom_hash, key.__hash__())
         else:
             raise NotImplementedError("We cannot synthesize value of type "
                                       "{type} yet".format(type=synthesize_type))
@@ -160,7 +160,7 @@ class SynthesizableDict(UserDict):
         # synthesized_key and key should have the same hash value
         # TODO: Note that if synthesized_key happens to be the same as
         #  the original key, this insertion does nothing. For example,
-        #  because of the default hash function of UntrustedInt, the
+        #  because of the default hash function of SpliceInt, the
         #  synthesized int might be the same as the original int key, so
         #  this insertion does not have any effect.
         val.synthesized = True
