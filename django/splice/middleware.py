@@ -1,6 +1,7 @@
 """Splice middleware to enforce Django responses to be trusted sinks."""
 
-from django.splice.splice import is_synthesized
+from django.splice.splice import is_synthesized, to_untrusted, add_taints
+from django.splice.identity import TaintSource, set_current_user_id
 from django.db.models.query import QuerySet
 from django.db.models import Model
 
@@ -18,8 +19,14 @@ def check_streaming_content(content):
 
 class SpliceMiddleware(object):
     """
-    New-style middleware (after Django 1.10). This middleware does nothing to
-    the client's request and only checks the validity of the final response.
+    New-style middleware (after Django 1.10). This middleware records the
+    identity of the client during request processing and checks the validity
+    of the final response.
+    During request processing, after user identification is finished, user
+    data (provided in a form) is immediately tainted so that taint propagation
+    happens right from the next middleware. Note that typically, middlewares
+    should not modify or leak user data in any ways.
+
     Once response is checked, SpliceMiddleware must also convert the entire
     response (header + content) to built-in types (not Splice-aware types)
     because the downstream wsgi handler (wsgiref/handlers.py) does type check!
@@ -34,6 +41,27 @@ class SpliceMiddleware(object):
     def __call__(self, request):
         # Code to be executed for each request before
         # the view (and later middleware) are called.
+        # Set the identity of the authenticated user for
+        # taint tracking; do nothing for anonymous users.
+        if request.user.is_authenticated:
+            set_current_user_id(request.user.id)
+        # Start taint tracking right away. User data is
+        # originally stored as str in GET and POST, both
+        # of which are QuerySet. They are in fact immutable:
+        # https://docs.djangoproject.com/en/3.1/ref/request-response/#django.http.QueryDict
+        # To modify the values in these two QuerySets, we
+        # must perform a copy() as directed by Django.
+        request.GET = request.GET.copy()
+        for k, v in request.GET.items():
+            v = to_untrusted(v)
+            v = add_taints(v, TaintSource.current_user_taint)
+            request.GET[k] = v
+        request.POST = request.POST.copy()
+        for k, v in request.POST.items():
+            v = to_untrusted(v)
+            v = add_taints(v, TaintSource.current_user_taint)
+            request.POST[k] = v
+
         response = self.get_response(request)
         # Code to be executed for each request/response after
         # the view is called.
