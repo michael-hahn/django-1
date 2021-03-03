@@ -1,7 +1,9 @@
 import functools
 import warnings
 import copy
+from bitarray import bitarray
 from django.splice.utils import is_class_method, is_static_method
+from django.splice.identity import TaintSource
 
 
 # Special methods that should not be decorated.
@@ -39,6 +41,7 @@ do_not_decorate = {'__init__',
                    '__setstate__',
                    '__reduce__',
                    '__reduce_ex__',
+                   '__deepcopy__',
                    }
 
 
@@ -86,18 +89,49 @@ def contains_untrusted_arguments(*args, **kwargs):
     return untrusted, False
 
 
+def is_tainted_by(value, taints):
+    """Store the taint(s) of a value to "taints" argument. Note that taints can be None. """
+    if isinstance(value, SpliceMixin):
+        if value.taints is not None:
+            taints |= value.taints
+        return
+    # Recursively check values in a list or other data structures
+    # FIXME: for data structures with key/value pairs, if __iter__ returns
+    #  keys only (in the for loop), then only keys are checked.
+    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or isinstance(value, dict):
+        for v in value:
+            is_tainted_by(v, taints)
+    return
+
+
+def union_argument_taints(*args, **kwargs):
+    """
+    Return a union of all taints associated with args and kwargs. Note that the return object
+    is *never* None. If no taints, this function will return a bitarray of all 0s.
+    """
+    # Initialize a bitarray of zeros
+    taints = bitarray(TaintSource.MAX_USERS, endian='big')
+    taints.setall(False)
+    for arg in args:
+        is_tainted_by(arg, taints)
+    for _, v in kwargs.items():
+        is_tainted_by(v, taints)
+    return taints
+
+
 def to_trusted(value, forced=False):
     """
     Explicitly coerce an object to be trusted, if the object is splice-aware
     by calling object's to_trusted() method. Conversion results in a
     RuntimeError if the untrusted object is synthesized, unless 'forced' is
     set to be True. If 'forced' is True, conversion always works. If object
-    is not splice-aware, the object is convert to a splice-aware object.
+    is not splice-aware, the object is convert to a splice-aware object and
+    the object has no taints.
     """
     if isinstance(value, SpliceMixin):
         return value.to_trusted(forced)
     else:
-        return SpliceMixin.to_splice(value, True, False)
+        return SpliceMixin.to_splice(value, True, False, None)
 
 
 def untrusted(func):
@@ -107,6 +141,10 @@ def untrusted(func):
     Note that the object is only set to be untrusted but not
     synthesized; therefore, do not use this decorator if the
     return object might be synthesized!
+
+    It also sets the object's taint to the taint of the current
+    user. This decorator is designed primarily for forms.fields
+    to_python() methods!
     """
 
     @functools.wraps(func)
@@ -115,27 +153,51 @@ def untrusted(func):
         # Some quick return
         if res is NotImplemented or res is None:
             return res
-        return to_untrusted(res)
+        res = to_untrusted(res)
+        return add_taints(res, TaintSource.current_user_taint)
 
     return wrapper
 
 
-def to_untrusted(value, synthesized=False):
+def to_untrusted(value):
     """
-    Explicitly coerce an object to be untrusted, if the object is splice-aware
-    by setting its trusted flat to False. If object is not splice-aware, the
-    object is convert to a splice-aware object. Optionally, this function can
-    set the object to also be synthesized.
-        """
+    Explicitly coerce an object to be untrusted, if the object is Splice-aware
+    by setting its trusted flag to False. If object is not Splice-aware, the
+    object is convert to an untrusted splice-aware object (but not synthesized).
+    The newly-converted Splice-aware object also has no taints.
+    """
     if isinstance(value, SpliceMixin):
         value.trusted = False
-        # Only set a non-synthesized object to synthesized if
-        # synthesized argument is set to be True.
-        if value.synthesized is not True and synthesized:
-            value.synthesized = synthesized
         return value
     else:
-        return SpliceMixin.to_splice(value, False, synthesized)
+        return SpliceMixin.to_splice(value, False, False, None)
+
+
+def to_synthesized(value):
+    """
+    Explicitly coerce an object to be synthesized, if the object is Splice-aware
+    by setting its synthesized flag to True. If object is not Splice-aware, the
+    object is convert to an untrusted and synthesized splice-aware object, but the
+    newly-converted Splice-aware object has no taints.
+    """
+    if isinstance(value, SpliceMixin):
+        value.synthesized = True
+        return value
+    else:
+        return SpliceMixin.to_splice(value, False, True, None)
+
+
+def add_taints(value, taints):
+    """
+    Explicitly add taints to an object, if the object is Splice-aware
+    by setting its taints attribute. If object is not Splice-aware, the
+    object is convert to a tainted (but trusted) splice-aware object.
+    """
+    if isinstance(value, SpliceMixin):
+        value.taints = taints
+        return value
+    else:
+        return SpliceMixin.to_splice(value, True, False, taints)
 
 
 class MetaSplice(type):
@@ -145,6 +207,9 @@ class MetaSplice(type):
     attributes in __new__ as well). A trusted flag is used to identify if an object is
     trusted and a synthesized flag to identify if an *untrusted* object is synthesized.
     An object *cannot* be both trusted and synthesized.
+
+    The new object's taint is the union of all taints of its arguments, and the taints
+    keyword parameter which is optional (default is no taint).
     """
 
     def __call__(cls, *args, **kwargs):
@@ -156,7 +221,7 @@ class MetaSplice(type):
         # such, we would create an infinite recursion!
         obj = cls.__new__(cls, *args, **kwargs)
         untrusted, synthesized = contains_untrusted_arguments(*args, **kwargs)
-        obj = SpliceMixin.to_splice(obj, not untrusted, synthesized)
+        obj = SpliceMixin.to_splice(obj, not untrusted, synthesized, None)
         # Object construction may also set
         # the flags explicitly in "kwargs".
         trusted = None
@@ -167,7 +232,15 @@ class MetaSplice(type):
         if "synthesized" in kwargs:
             synthesized = kwargs["synthesized"]
             del kwargs["synthesized"]
+        # Object construction may also set
+        # taint explicitly in "kwargs".
+        taints = None
+        if "taints" in kwargs:
+            taints = kwargs["taints"]
+            del kwargs["taints"]
+
         obj.__init__(*args, **kwargs)
+
         # If flags have also been set explicitly,
         # we have to make sure there is no conflict.
         # One can set a trusted object explicitly to
@@ -197,6 +270,10 @@ class MetaSplice(type):
         # Final check to make sure flag values make sense
         if obj._trusted and obj._synthesized:
             raise AttributeError("Cannot initialize a trusted and synthesized object.")
+        # Object taint update
+        obj._taints = union_argument_taints(*args, **kwargs)
+        if taints is not None:
+            obj._taints |= taints
         return obj
 
 
@@ -211,11 +288,13 @@ class SpliceMixin(metaclass=MetaSplice):
 
     registered_cls = {}
 
-    def __new__(cls, *args, trusted=True, synthesized=False, **kwargs):
+    def __new__(cls, *args, trusted=True, synthesized=False, taints=None, **kwargs):
         """
         We must override __new__ so that "trusted" and "synthesized"
         don't flow into the super().__new__, which can be bad for
         base classes that are not designed for inheritance.
+
+        We do the same for "taints" as well.
         """
         # Because we override __new__, if super() is object, then __new__
         # does not take any additional arguments. Here are some references:
@@ -263,22 +342,22 @@ class SpliceMixin(metaclass=MetaSplice):
     def __iter__(self):
         """Define __iter__ so the iterator returns a splice-aware value."""
         for x in super().__iter__():
-            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized)
+            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
 
-    def __deepcopy__(self, memo):
-        """
-        Override __deepcopy__ so that when deepcopy() is invoked in to_splice_cls(),
-        this method is called. Ref: https://stackoverflow.com/a/15774013/9632613.
-        """
-        cls = self.__class__
-        result = cls.__new__(cls)
-        memo[id(self)] = result
-        for k, v in self.__dict__.items():
-            setattr(result, k, copy.deepcopy(v, memo))
-        return result
+    # def __deepcopy__(self, memo):
+    #     """
+    #     Override __deepcopy__ so that when deepcopy() is invoked in to_splice_cls(),
+    #     this method is called. Ref: https://stackoverflow.com/a/15774013/9632613.
+    #     """
+    #     cls = self.__class__
+    #     result = cls.__new__(cls)
+    #     memo[id(self)] = result
+    #     for k, v in self.__dict__.items():
+    #         setattr(result, k, copy.deepcopy(v, memo))
+    #     return result
 
     @staticmethod
-    def to_splice(value, trusted, synthesized):
+    def to_splice(value, trusted, synthesized, taints):
         """
         Convert a value to the splice-aware type if
         it exists. The flags will be set based on
@@ -286,11 +365,14 @@ class SpliceMixin(metaclass=MetaSplice):
         no corresponding Splice-aware type, we raise
         a warning. If value is already Splice-aware, this
         function can be used to modify its flags.
+
+        "Taints" are handled similarly.
         """
         # If value is already a splice-aware type
         if isinstance(value, SpliceMixin):
             value.trusted = trusted
             value.synthesized = synthesized
+            value.taints = taints
             return value
         # bool is a subclass of int, so we must check it first
         # it cannot be usefully converted to a splice-aware type
@@ -301,7 +383,7 @@ class SpliceMixin(metaclass=MetaSplice):
         # SpliceMixin, which automatically registers the class)
         cls = value.__class__.__name__
         if cls in SpliceMixin.registered_cls:
-            return SpliceMixin.registered_cls[cls].splicify(value, trusted, synthesized)
+            return SpliceMixin.registered_cls[cls].splicify(value, trusted, synthesized, taints)
         #####################################################
         #  Recursively convert values in list or other structured data
         #  Note that we do not just use list/dict/set comprehension as
@@ -310,21 +392,21 @@ class SpliceMixin(metaclass=MetaSplice):
         #  around in recursive functions to be mutated.
         elif isinstance(value, list):
             for i in range(len(value)):
-                value[i] = SpliceMixin.to_splice(value[i], trusted, synthesized)
+                value[i] = SpliceMixin.to_splice(value[i], trusted, synthesized, taints)
             return value
         elif isinstance(value, tuple):
             # Creating a new tuple is fine because tuple is immutable
-            return tuple(SpliceMixin.to_splice(v, trusted, synthesized) for v in value)
+            return tuple(SpliceMixin.to_splice(v, trusted, synthesized, taints) for v in value)
         # Cannot modify a set during iteration, so we do it this way:
         elif isinstance(value, set):
-            list_copy = [SpliceMixin.to_splice(v, trusted, synthesized) for v in value]
+            list_copy = [SpliceMixin.to_splice(v, trusted, synthesized, taints) for v in value]
             value.clear()
             value.update(list_copy)
             return value
         # Cannot modify a dict during iteration, so we do it this way:
         elif isinstance(value, dict):
-            dict_copy = {SpliceMixin.to_splice(k, trusted, synthesized):
-                         SpliceMixin.to_splice(v, trusted, synthesized)
+            dict_copy = {SpliceMixin.to_splice(k, trusted, synthesized, taints):
+                         SpliceMixin.to_splice(v, trusted, synthesized, taints)
                          for k, v in value.items()}
             value.clear()
             value.update(dict_copy)
@@ -370,13 +452,11 @@ class SpliceMixin(metaclass=MetaSplice):
                 # Calling inherited methods (including built-in methods) - IMPORTANT NOTE:
                 # res usually return objects of original (including built-in) type(s), but
                 # it is possible that res returns objects of Splice-managed types already.
-                # This is OK because SpliceMixin will return the same object (perhaps with
-                # its trusted and synthesized attributes modified) if it is already of
-                # Splice-managed type.
 
                 # TODO: does it *always* make sense to consider the return value/self
-                #  untrusted/synthesized as long as any one of the input arguments is?
+                #  untrusted/synthesized/tainted as long as any one of the input is?
                 untrusted, synthesized = contains_untrusted_arguments(*args, **kwargs)
+                taints = union_argument_taints(*args, **kwargs)
                 # Check if "self" (i.e., the first argument) is modified
                 # Note that this check applies only to methods that are
                 # not a class method or a static method, because otherwise
@@ -395,6 +475,7 @@ class SpliceMixin(metaclass=MetaSplice):
                 # should never be the case!
                 if not is_static and not is_class and self != args[0]:
                     # "self" should be splice-aware
+                    # FIXME: This may not be true for user-defined classes
                     if not isinstance(args[0], SpliceMixin):
                         raise RuntimeError("{} is not Splice-aware.".format(args[0]))
                     # See if "self" should be an untrusted and/or synthesized object.
@@ -402,10 +483,15 @@ class SpliceMixin(metaclass=MetaSplice):
                         args[0].trusted = False
                     if synthesized:
                         args[0].synthesized = True
+                    # Update "self"'s taints
+                    if args[0].taints is None:
+                        args[0].taints = taints
+                    else:
+                        args[0].taints |= taints
                 # Some quick return (nothing else to do)
-                if res is None or res is NotImplemented:
+                if res is None or res is NotImplemented or isinstance(res, SpliceMixin):
                     return res
-                return SpliceMixin.to_splice(res, not untrusted, synthesized)
+                return SpliceMixin.to_splice(res, not untrusted, synthesized, taints)
 
             return wrapper
 
@@ -512,8 +598,16 @@ class SpliceMixin(metaclass=MetaSplice):
     def trusted(self, trusted):
         self._trusted = trusted
 
+    @property
+    def taints(self):
+        return self._taints
+
+    @taints.setter
+    def taints(self, taints):
+        self._taints = taints
+
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
+    def splicify(cls, value, trusted, synthesized, taints):
         """
         Convert a value to its splice-aware type and set the flags. Reclassing an object
         by assigning __class__ does *not* always work because __class__ assignment is only
@@ -524,6 +618,7 @@ class SpliceMixin(metaclass=MetaSplice):
             value.__class__ = cls
             value.trusted = trusted
             value.synthesized = synthesized
+            value.taints = taints
             return value
         except TypeError as e:
             raise NotImplementedError("You cannot inherit splicify() from SpliceMixin for this class;"
