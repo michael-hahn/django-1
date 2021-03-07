@@ -19,6 +19,9 @@ from django.utils.encoding import iri_to_uri
 from django.utils.http import http_date
 from django.utils.regex_helper import _lazy_re_compile
 
+# !!!SPLICE: shadow built-in bytes
+from django.splice.splicetypes import SpliceBytes as bytes
+
 _charset_from_content_type_re = _lazy_re_compile(r';\s*charset=(?P<charset>[^\s;]+)', re.I)
 
 
@@ -312,13 +315,19 @@ class HttpResponse(HttpResponseBase):
 
     @property
     def content(self):
-        return b''.join(self._container)
+        # !!!SPLICE: literal bytes object (b'') loses taints and tags
+        # We replace it with an actual object constructor call.
+        # return b''.join(self._container)
+        return bytes('', encoding='ascii').join(self._container)
 
     @content.setter
     def content(self, value):
         # Consume iterators upon assignment to allow repeated iteration.
         if hasattr(value, '__iter__') and not isinstance(value, (bytes, str)):
-            content = b''.join(self.make_bytes(chunk) for chunk in value)
+            # !!!SPLICE: literal bytes object (b'') loses taints and tags
+            # We replace it with an actual object constructor call.
+            # content = b''.join(self.make_bytes(chunk) for chunk in value)
+            content = bytes('', encoding='ascii').join(self.make_bytes(chunk) for chunk in value)
             if hasattr(value, 'close'):
                 try:
                     value.close()
