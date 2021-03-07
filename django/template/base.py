@@ -932,6 +932,8 @@ class NodeList(list):
     contains_nontext = False
 
     def render(self, context):
+        # !!!SPLICE: shadow built-in str
+        from django.splice.splicetypes import SpliceStr as str
         bits = []
         for node in self:
             if isinstance(node, Node):
@@ -939,7 +941,10 @@ class NodeList(list):
             else:
                 bit = node
             bits.append(str(bit))
-        return mark_safe(''.join(bits))
+        # !!!SPLICE: literal str object ('') loses taints and tags
+        # We replace it with an actual object constructor call.
+        # return mark_safe(''.join(bits))
+        return mark_safe(str('').join(bits))
 
     def get_nodes_by_type(self, nodetype):
         "Return a list of all nodes of the given type"
@@ -966,6 +971,8 @@ def render_value_in_context(value, context):
     means escaping, if required, and conversion to a string. If value is a
     string, it's expected to already be translated.
     """
+    # !!!SPLICE: shadow built-in str
+    from django.splice.splicetypes import SpliceStr as str
     value = template_localtime(value, use_tz=context.use_tz)
     value = localize(value, use_l10n=context.use_l10n)
     if context.autoescape:
