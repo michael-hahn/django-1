@@ -6,6 +6,8 @@ be interpreted by the HTML engine (e.g. '<') into the appropriate entities.
 """
 
 from functools import wraps
+# !!!SPLICE: shadow built-in str
+from django.splice.splicetypes import SpliceStr as str
 
 
 class SafeData:
