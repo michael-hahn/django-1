@@ -155,6 +155,8 @@ class ForNode(Node):
         )
 
     def render(self, context):
+        # !!!SPLICE: shadow built-in bytes
+        from django.splice.splicetypes import SpliceStr as str
         if 'forloop' in context:
             parentloop = context['forloop']
         else:
@@ -215,7 +217,10 @@ class ForNode(Node):
                     # the context ending up in an inconsistent state when other
                     # tags (e.g., include and with) push data to context.
                     context.pop()
-        return mark_safe(''.join(nodelist))
+        # !!!SPLICE: literal str object ('') loses taints and tags
+        # We replace it with an actual object constructor call.
+        # return mark_safe(''.join(nodelist))
+        return mark_safe(str('').join(nodelist))
 
 
 class IfChangedNode(Node):
