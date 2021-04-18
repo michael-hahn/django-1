@@ -19,6 +19,9 @@ from django.utils.deprecation import RemovedInDjango40Warning
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext, gettext_lazy as _
 
+# !!!SPLICE
+from django.splice.splice import SpliceMixin
+
 __all__ = (
     'ModelForm', 'BaseModelForm', 'model_to_dict', 'fields_for_model',
     'ModelChoiceField', 'ModelMultipleChoiceField', 'ALL_FIELDS',
@@ -409,6 +412,16 @@ class BaseModelForm(BaseForm):
         # Validate uniqueness if needed.
         if self._validate_unique:
             self.validate_unique()
+
+        # !!!SPLICE: Similar to _post_clean() in forms.py, after
+        # all the validation, model form data should be trusted.
+        for name, field in self.fields.items():
+            if name in exclude:
+                continue
+            value = getattr(self.instance, name)
+            if isinstance(value, SpliceMixin):
+                value.trusted = True
+
 
     def validate_unique(self):
         """
