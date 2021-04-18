@@ -41,6 +41,10 @@ from django.utils.deprecation import RemovedInDjango40Warning
 from django.utils.functional import cached_property
 from django.utils.tree import Node
 
+# !!!SPLICE
+from django.splice.splice import SpliceMixin
+from django.splice.identity import union, to_bitarray, empty_taint
+
 __all__ = ['Query', 'RawQuery']
 
 
@@ -503,8 +507,29 @@ class Query(BaseExpression):
 
         converters = compiler.get_converters(outer_query.annotation_select.values())
         result = next(compiler.apply_converters((result,), converters))
-
-        return dict(zip(outer_query.annotation_select, result))
+        # FIXME: We are assuming in the rest of the code that if the length of
+        #  'result' is larger than 1, the first half of the 'result' is the data
+        #  and the second half of the 'result' is taints. This assumption might
+        #  not always be true (if 'result' length is 1, it's just the value. This
+        #  is typically the case for aggregations like COUNT).
+        # !!!SPLICE: The following taint propagation logic to the results applies
+        #            only to *cell-level* tainting. Logic needs to change for
+        #            *roll-level* tainting, if used!
+        if len(result) == 1:
+            return dict(zip(outer_query.annotation_select, result))
+        # The first half of the result is actual query results and the second half is
+        # taints, results and their taints are arranged in the same order
+        vals = result[:len(result)//2]
+        taints = result[len(result)//2:]
+        tainted_result = []
+        for i in range(compiler._extra_selected_taint):
+            # Convert 'val' to be of Splice-aware type directly if needed
+            # Note that val itself is trusted when obtained from DB.
+            tainted_val = SpliceMixin.to_splice(vals[i], trusted=True, synthesized=False,
+                                                taints=to_bitarray(taints[i]))
+            tainted_result.append(tainted_val)
+        # return dict(zip(outer_query.annotation_select, result))
+        return dict(zip(outer_query.annotation_select, tainted_result))
 
     def get_count(self, using):
         """

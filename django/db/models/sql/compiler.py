@@ -18,6 +18,9 @@ from django.utils.functional import cached_property
 from django.utils.hashable import make_hashable
 from django.utils.regex_helper import _lazy_re_compile
 
+# !!!SPLICE
+from django.splice.query import sql_rewrite_execute
+
 
 class SQLCompiler:
     # Multiline ordering SQL clause may appear from RawSQL.
@@ -39,6 +42,8 @@ class SQLCompiler:
         self.annotation_col_map = None
         self.klass_info = None
         self._meta_ordering = None
+        # !!!SPLICE: Record the number of extra taint data retrieved from the DB
+        self._extra_selected_taint = 0
 
     def setup_query(self):
         if all(self.query.alias_refcount[a] == 0 for a in self.query.alias_map):
@@ -1153,7 +1158,17 @@ class SQLCompiler:
         else:
             cursor = self.connection.cursor()
         try:
-            cursor.execute(sql, params)
+            # !!!SPLICE: Query rewrite for taint propagation (but only for aggregation)
+            #            There are only two places in Django where result_type is set to
+            #            SINGLE: 1. in sql/query.py's get_aggregation() method, and 2.
+            #            in has_results() method above. Either way, we will only rewrite
+            #            queries when result_type is SINGLE because in the other case,
+            #            the queries are mostly SPJ and taints can propagate properly.
+            #            Therefore, we will only perform SQL execution on the original
+            #            query if result_type is not SINGLE.
+            if result_type != SINGLE:
+                print("SQL (Non-SINGLE): {} ({})".format(sql, params))
+                cursor.execute(sql, params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)
             cursor.close()
@@ -1163,14 +1178,23 @@ class SQLCompiler:
             # Give the caller the cursor to process and close.
             return cursor
         if result_type == SINGLE:
-            try:
-                val = cursor.fetchone()
-                if val:
-                    return val[0:self.col_count]
-                return val
-            finally:
-                # done with the cursor
-                cursor.close()
+            # !!!SPLICE: We need to rewrite aggregation queries and execute them. It is
+            #            possible that a 'sql' has to be rewritten into several sqls.
+            #            Therefore, we will perform those executions in sql_rewrite_execute().
+            #            Note that has_results() may also set result_type to SINGLE (see
+            #            above), we will check for this case in sql_rewrite_execute().
+            val, extra_cols = sql_rewrite_execute(cursor, sql, params, self.col_count)
+            self._extra_selected_taint = extra_cols
+            return val
+            # !!!SPLICE: The following code will be handled in sql_rewrite_execute()
+            # try:
+            #     val = cursor.fetchone()
+            #     if val:
+            #         return val[0:self.col_count]
+            #     return val
+            # finally:
+            #     # done with the cursor
+            #     cursor.close()
         if result_type == NO_RESULTS:
             cursor.close()
             return
