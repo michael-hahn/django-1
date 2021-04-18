@@ -27,6 +27,10 @@ from django.db.models.utils import resolve_callables
 from django.utils import timezone
 from django.utils.functional import cached_property, partition
 
+# !!!SPLICE
+from django.splice.identity import empty_taint, union, union_to_int, to_bitarray
+from django.splice.splice import SpliceMixin
+
 # The maximum number of results to fetch in a get() query.
 MAX_GET_RESULTS = 21
 
@@ -68,7 +72,66 @@ class ModelIterable(BaseIterable):
             ])) for field, related_objs in queryset._known_related_objects.items()
         ]
         for row in compiler.results_iter(results):
+            # !!!SPLICE: Before row values are used to create a model instance,
+            #            we want to convert value type to Splice-aware types.
+            #            Previously conversion is done dynamically through
+            #            descriptors (see splicefields.py), but this causes
+            #            issues with the deletion process because GC cannot
+            #            recognize that the value is actually tainted. So we
+            #            try this way and see.
+            # TODO: Does this also fix foreign key objects for retrieval? (It
+            #  seems so from unit test cases but should double check.)
+            print(init_list)
+            print(row)
+            for pos, attname in enumerate(init_list):
+                if attname.endswith("_taint"):
+                    # If we have a taint column fetched from the database, we should
+                    # also have its corresponding data column and tag column fetched as well.
+                    dataname = attname[:-6] # The name of the data column is the same as attname without '_taint'
+                    tagname = dataname + "_synthesized" # The name of the corresponding synthesized tag column
+                    try:
+                        data_pos = init_list.index(dataname)
+                    except ValueError as e:
+                        raise("Query fetched a taint without its corresponding data")
+                    try:
+                        tag_pos = init_list.index(tagname)
+                    except ValueError as e:
+                        raise("Query fetched a taint without its corresponding synthesized tag")
+                    # Get actual taint and tag and assign them to the data in row
+                    taint = row[pos]
+                    tag = row[tag_pos]
+                    row[data_pos] = SpliceMixin.to_splice(row[data_pos],
+                                                          trusted=not tag,
+                                                          synthesized=tag,
+                                                          taints=to_bitarray(taint))
             obj = model_cls.from_db(db, init_list, row[model_fields_start:model_fields_end])
+            # !!!SPLICE: Propagate taints from query results. Each 'row' contains one result,
+            #            which is then mapped to a model instance 'obj'. The mapping code
+            #            above is taint-oblivious. Additional taints, if needed (for example
+            #            in the join cases), are also stored in 'row' per our
+            #            row-level instrumentation. We will use the additional taints to perform
+            #            taint propagation from database 'row's to Python 'obj's. Our
+            #            instrumentation below, along with SQL query rewrite, can handle all SPJ
+            #            ops for row-level taints.
+            # FIXME: We have not decided if we want query *parameters* to also propagate taints
+            #  to the query result. Query parameter taints are stored in `_taints` of the QuerySet
+            #  object and the taint is initialized to 0 (i.e., no taint).
+            # query_taints = queryset._taints
+            # Get the taint of the "obj", if exists (because 'obj' may receive taint from 'row' directly)
+            # UNCOMMENT NEXT LINE FOR *ROW-LEVEL* TAINT
+            # instance_taints = getattr(obj, "taints", 0)
+            # Get propagated row-level taints and union with instance_taints. Extra taints (e.g., from
+            # join of two rows) are appended to the end of the 'row' and the SQLCompiler object knows
+            # how many extra taints are appended (since it is specified in the SQL query by us). Note
+            # that `_extra_selected_taint` can be 0 if no extra taints are included in the query.
+            # UNCOMMENT NEXT LINES FOR *ROW-LEVEL* TAINT
+            # for i in range(compiler._extra_selected_taint):
+            #     instance_taints = union(instance_taints, row[-1-i])
+            # Update the taint of 'obj'. We don't need to change this line even if we do not want to include
+            # taints from query parameters, because `query_taints` is initialize to 0, causing no harm.
+            # UNCOMMENT NEXT LINES FOR *ROW-LEVEL* TAINT
+            # setattr(obj, "taints", union_to_int(query_taints, instance_taints))
+
             for rel_populator in related_populators:
                 rel_populator.populate(row, obj)
             if annotation_col_map:
@@ -109,7 +172,15 @@ class ValuesIterable(BaseIterable):
         ]
         indexes = range(len(names))
         for row in compiler.results_iter(chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size):
-            yield {names[i]: row[i] for i in indexes}
+            # !!!SPLICE: row contains actual values and taint values
+            #            We assign taints to the values here directly.
+            # yield {names[i]: row[i] for i in indexes}
+            d = dict()
+            for i in range(len(names)//2):
+                taint_index = len(names) // 2 + i
+                val = SpliceMixin.to_splice(row[i], trusted=True, synthesized=False, taints=to_bitarray(row[taint_index]))
+                d[names[i]] = val
+            yield d
 
 
 class ValuesListIterable(BaseIterable):
@@ -199,6 +270,9 @@ class QuerySet:
         self._fields = None
         self._defer_next_filter = False
         self._deferred_filter = None
+        # !!!SPLICE: Query parameter taints. Initialize to be an empty taint.
+        # FIXME: Do we want query parameters to have taints too?
+        self._taints = empty_taint()
 
     @property
     def query(self):
@@ -837,6 +911,14 @@ class QuerySet:
         return clone
 
     def values(self, *fields, **expressions):
+        # !!!SPLICE: Add taint fields to propagate taints for Projection-like ops
+        # If fields is not empty, projection op is used. Then, for each projected
+        # field, we must add its corresponding taint field.
+        if len(fields) > 0:
+            taint_fields = []
+            for field in fields:
+                taint_fields.append(field + "_taint")
+            fields += tuple(taint_fields)
         fields += tuple(expressions)
         clone = self._values(*fields, **expressions)
         clone._iterable_class = ValuesIterable
@@ -955,6 +1037,22 @@ class QuerySet:
                 "Cannot filter a query once a slice has been taken."
 
         clone = self._chain()
+
+        # !!!SPLICE: Update QuerySet's query parameter taints. Note
+        #            that we should comment out the code below if
+        #            we do not want to include query parameter taints.
+        # from django.splice.db import SpliceDB
+        # # Positional arguments are for Q expressions
+        # for arg in args:
+        #     if isinstance(arg, Q):
+        #         for _, v in arg.children:
+        #             if isinstance(v, SpliceMixin) or isinstance(v, SpliceDB):
+        #                 clone._taints = union(clone._taints, v.taints)
+        #
+        # for _, v in kwargs.items():
+        #     if isinstance(v, SpliceMixin) or isinstance(v, SpliceDB):
+        #         clone._taints = union(clone._taints, v.taints)
+
         if self._defer_next_filter:
             self._defer_next_filter = False
             clone._deferred_filter = negate, args, kwargs
@@ -1301,6 +1399,8 @@ class QuerySet:
         c._known_related_objects = self._known_related_objects
         c._iterable_class = self._iterable_class
         c._fields = self._fields
+        # !!!SPLICE: Copy QuerySet's query parameter taints
+        c._taints = self._taints
         return c
 
     def _fetch_all(self):
