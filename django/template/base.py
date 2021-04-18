@@ -972,15 +972,21 @@ def render_value_in_context(value, context):
     string, it's expected to already be translated.
     """
     # !!!SPLICE: shadow built-in str
-    from django.splice.splicetypes import SpliceStr as str
     value = template_localtime(value, use_tz=context.use_tz)
     value = localize(value, use_l10n=context.use_l10n)
     if context.autoescape:
+        # !!!SPLICE: Do not shadow str here. value might be of type
+        #            such as BoundField that is decorated as @html_safe
+        #            In such a case str() will direct the call to
+        #            mark_safe(klass_str(self)). We need those str to
+        #            be marked safe so they do not call escape.
         if not issubclass(type(value), str):
             value = str(value)
         return conditional_escape(value)
     else:
-        return str(value)
+        # !!!SPLICE: we "shadow" here.
+        from django.splice.splicetypes import SpliceStr
+        return SpliceStr(value)
 
 
 class VariableNode(Node):
