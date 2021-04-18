@@ -109,6 +109,14 @@ class CommonMiddleware(MiddlewareMixin):
 
         # Add the Content-Length header to non-streaming responses if not
         # already set.
+        # !!!SPLICE: Note that `response.content` should be of `SpliceByte`
+        #            type with Splice-aware Django. Alas, the `Content-Length`
+        #            header's value is of `SpliceStr` type, not the built-in
+        #            `str` type! In order for the HttpResponse to be properly
+        #            handled, we must include SpliceTrustedSinkMiddleware at
+        #            the bottom of the middleware stack so that it is converted
+        #            to `str`. Otherwise, it will fail when header values are
+        #            checked in wsgiref/headers.py in Headers.__init__ call!
         if not response.streaming and not response.has_header('Content-Length'):
             response['Content-Length'] = str(len(response.content))
 
