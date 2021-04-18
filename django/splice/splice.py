@@ -3,7 +3,7 @@ import warnings
 import copy
 from bitarray import bitarray
 from django.splice.utils import is_class_method, is_static_method
-from django.splice.identity import TaintSource
+from django.splice.identity import TaintSource, empty_taint
 
 
 # Special methods that should not be decorated.
@@ -90,18 +90,17 @@ def contains_untrusted_arguments(*args, **kwargs):
 
 
 def is_tainted_by(value, taints):
-    """Store the taint(s) of a value to "taints" argument. Note that taints can be None. """
+    """Store the taint(s) of a value to "taints" argument. Note that taints *cannot* be None. """
     if isinstance(value, SpliceMixin):
-        if value.taints is not None:
-            taints |= value.taints
-        return
+        taints |= value.taints
+        return taints
     # Recursively check values in a list or other data structures
     # FIXME: for data structures with key/value pairs, if __iter__ returns
     #  keys only (in the for loop), then only keys are checked.
     elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or isinstance(value, dict):
         for v in value:
-            is_tainted_by(v, taints)
-    return
+            taints = is_tainted_by(v, taints)
+    return taints
 
 
 def union_argument_taints(*args, **kwargs):
@@ -110,12 +109,11 @@ def union_argument_taints(*args, **kwargs):
     is *never* None. If no taints, this function will return a bitarray of all 0s.
     """
     # Initialize a bitarray of zeros
-    taints = bitarray(TaintSource.MAX_USERS, endian='big')
-    taints.setall(False)
+    taints = empty_taint()
     for arg in args:
-        is_tainted_by(arg, taints)
+        taints = is_tainted_by(arg, taints)
     for _, v in kwargs.items():
-        is_tainted_by(v, taints)
+        taints = is_tainted_by(v, taints)
     return taints
 
 
@@ -131,7 +129,7 @@ def to_trusted(value, forced=False):
     if isinstance(value, SpliceMixin):
         return value.to_trusted(forced)
     else:
-        return SpliceMixin.to_splice(value, True, False, None)
+        return SpliceMixin.to_splice(value, True, False, empty_taint())
 
 
 def untrusted(func):
@@ -170,7 +168,7 @@ def to_untrusted(value):
         value.trusted = False
         return value
     else:
-        return SpliceMixin.to_splice(value, False, False, None)
+        return SpliceMixin.to_splice(value, False, False, empty_taint())
 
 
 def to_synthesized(value):
@@ -339,10 +337,16 @@ class SpliceMixin(metaclass=MetaSplice):
     #     else:
     #         return SpliceMixin.registered_cls["str"](super().__format__(format_spec))
 
-    def __iter__(self):
-        """Define __iter__ so the iterator returns a splice-aware value."""
-        for x in super().__iter__():
-            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
+    # __iter__ should only be defined for specific data types that make sense to have __iter__
+    # Otherwise super().__iter__() can fail (e.g., if a method checks if a SpliceInt object has
+    # __iter__ attribute and it does because of this definition, the method might try to call
+    # __iter__ on SpliceInt, which would fail because int has no __iter__ defined). Instead, we
+    # will implement this method for iterable types only.
+    # DO NOT UNCOMMENT THE FOLLOWING __ITER__ CODE! THEY ARE IMPLEMENTED IN OTHER PLACES!
+    # def __iter__(self):
+    #     """Define __iter__ so the iterator returns a splice-aware value."""
+    #     for x in super().__iter__():
+    #         yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
 
     # def __deepcopy__(self, memo):
     #     """

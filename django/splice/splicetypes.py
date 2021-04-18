@@ -1,7 +1,7 @@
 """Splice classes."""
 
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date, time, timedelta
 
 from django.splice.splice import SpliceMixin
 
@@ -46,15 +46,15 @@ class SpliceInt(SpliceMixin, int):
         return type(self).custom_hash(self)
 
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return cls(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return cls(value, trusted=trusted, synthesized=synthesized, taints=taints)
 
 
 class SpliceFloat(SpliceMixin, float):
     """Subclass Python trusted float class and SpliceMixin."""
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return cls(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return cls(value, trusted=trusted, synthesized=synthesized, taints=taints)
 
 
 class SpliceStr(SpliceMixin, str):
@@ -83,24 +83,24 @@ class SpliceStr(SpliceMixin, str):
         """
         cls.custom_hash = new_hash_func
 
-    def __hash__(self):
-        """
-        Override str hash function to use either
-        the default or the user-provided hash function.
-        This function calls the helper function
-        _untrusted_hash_() so that __hash__() output
-        can be decorated.
-        """
-        return self._splice_hash_()
-
-    def _splice_hash_(self):
-        """Called by __hash__() but return a decorated value."""
-        chars = bytes(self, 'ascii')
-        return type(self).custom_hash(chars)
+    # def __hash__(self):
+    #     """
+    #     Override str hash function to use either
+    #     the default or the user-provided hash function.
+    #     This function calls the helper function
+    #     _untrusted_hash_() so that __hash__() output
+    #     can be decorated.
+    #     """
+    #     return self._splice_hash_()
+    #
+    # def _splice_hash_(self):
+    #     """Called by __hash__() but return a decorated value."""
+    #     chars = bytes(self, 'ascii')
+    #     return type(self).custom_hash(chars)
 
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return cls(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return cls(value, trusted=trusted, synthesized=synthesized, taints=taints)
 
     def __radd__(self, other):
         """Define __radd__ so a str literal + an untrusted str returns an untrusted str."""
@@ -111,26 +111,44 @@ class SpliceStr(SpliceMixin, str):
             trusted |= other.trusted
         return SpliceStr(other.__add__(self), trusted=trusted, synthesized=synthesized)
 
+    def __iter__(self):
+        """Define __iter__ so the iterator returns a splice-aware value."""
+        for x in super().__iter__():
+            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
+
+    def unsplicify(self):
+        return super().__str__()
+
 
 class SpliceBytes(SpliceMixin, bytes):
     """Subclass Python builtin bytes class and SpliceMixin."""
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return SpliceBytes(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return SpliceBytes(value, trusted=trusted, synthesized=synthesized, taints=taints)
+
+    def __iter__(self):
+        """Define __iter__ so the iterator returns a splice-aware value."""
+        for x in super().__iter__():
+            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
 
 
 class SpliceBytearray(SpliceMixin, bytearray):
     """Subclass Python builtin bytearray class and SpliceMixin."""
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return SpliceBytearray(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return SpliceBytearray(value, trusted=trusted, synthesized=synthesized, taints=taints)
+
+    def __iter__(self):
+        """Define __iter__ so the iterator returns a splice-aware value."""
+        for x in super().__iter__():
+            yield SpliceMixin.to_splice(x, self.trusted, self.synthesized, self.taints)
 
 
 class SpliceDecimal(SpliceMixin, Decimal):
     """Subclass Python decimal module's Decimal class and SpliceMixin."""
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
-        return SpliceDecimal(value, trusted=trusted, synthesized=synthesized)
+    def splicify(cls, value, trusted, synthesized, taints):
+        return SpliceDecimal(value, trusted=trusted, synthesized=synthesized, taints=taints)
 
 
 class SpliceDatetime(SpliceMixin, datetime):
@@ -141,7 +159,7 @@ class SpliceDatetime(SpliceMixin, datetime):
     """
 
     @classmethod
-    def splicify(cls, value, trusted, synthesized):
+    def splicify(cls, value, trusted, synthesized, taints):
         year = value.year
         month = value.month
         day = value.day
@@ -157,7 +175,66 @@ class SpliceDatetime(SpliceMixin, datetime):
                               second=second,
                               microsecond=microsecond,
                               trusted=trusted,
-                              synthesized=synthesized)
+                              synthesized=synthesized,
+                              taints=taints)
+
+
+class SpliceDate(SpliceMixin, date):
+    """Subclass Python datetime module's data class and SpliceMixin."""
+
+    @classmethod
+    def splicify(cls, value, trusted, synthesized, taints):
+        year = value.year
+        month = value.month
+        day = value.day
+        return SpliceDate(year=year,
+                          month=month,
+                          day=day,
+                          trusted=trusted,
+                          synthesized=synthesized,
+                          taints=taints)
+
+
+class SpliceTime(SpliceMixin, time):
+    """Subclass Python datetime module's time class and SpliceMixin."""
+
+    @classmethod
+    def splicify(cls, value, trusted, synthesized, taints):
+        hour = value.hour
+        minute = value.minute
+        second = value.second
+        microsecond = value.microsecond
+        tzinfo = value.tzinfo
+        fold = value.fold
+        return SpliceTime(hour=hour,
+                          minute=minute,
+                          second=second,
+                          microsecond=microsecond,
+                          tzinfo=tzinfo,
+                          fold=fold,
+                          trusted=trusted,
+                          synthesized=synthesized,
+                          taints=taints)
+
+
+class SpliceTimedelta(SpliceMixin, timedelta):
+    """Subclass Python datetime module's time class and SpliceMixin."""
+
+    @classmethod
+    def splicify(cls, value, trusted, synthesized, taints):
+        """
+        Note that only days, seconds and microseconds are stored internally.
+        Ref: https://docs.python.org/2/library/datetime.html#timedelta-objects
+        """
+        days = value.days
+        seconds = value.seconds
+        microseconds = value.microseconds
+        return SpliceTimedelta(days=days,
+                               seconds=seconds,
+                               microseconds=microseconds,
+                               trusted=trusted,
+                               synthesized=synthesized,
+                               taints=taints)
 
 
 if __name__ == "__main__":
