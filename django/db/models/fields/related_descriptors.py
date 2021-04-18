@@ -166,11 +166,17 @@ class ForwardManyToOneDescriptor:
         if instance is None:
             return self
 
+        # !!!SPLICE: Flag (see explanation below)
+        # splice_from_cache = False
         # The related instance is loaded from the database and then cached
         # by the field on the model instance state. It can also be pre-cached
         # by the reverse accessor (ReverseOneToOneDescriptor).
         try:
             rel_obj = self.field.get_cached_value(instance)
+            # !!!SPLICE: if rel_obj is directly obtained from cache, its taints should
+            #            not be updated later. Its taints are only updated if it is
+            #            accessed from a tainted remote object. Mark here.
+            # splice_from_cache = True
         except KeyError:
             has_value = None not in self.field.get_local_related_value(instance)
             ancestor_link = instance._meta.get_ancestor_link(self.field.model) if has_value else None
@@ -181,6 +187,8 @@ class ForwardManyToOneDescriptor:
                 # The value might be cached on an ancestor if the instance
                 # originated from walking down the inheritance chain.
                 rel_obj = self.field.get_cached_value(ancestor, default=None)
+                # !!!SPLICE: Mark here.
+                # splice_from_cache = True
             else:
                 rel_obj = None
             if rel_obj is None and has_value:
@@ -198,6 +206,20 @@ class ForwardManyToOneDescriptor:
                 "%s has no %s." % (self.field.model.__name__, self.field.name)
             )
         else:
+            # !!!SPLICE: update the taint so the rel_obj can have the taint of both the "many" and the "one"
+            #            the taint is only updated if it is not from cache (see above). This applies only to
+            #            row-level tainting. We comment out for now since we are using cell-level tainting.
+            # if not splice_from_cache:
+            #     from django.splice.identity import union_to_int
+            #     # Get the integer taint of the "instance" record (row of "many")
+            #     instance_taints = getattr(instance, "taints", 0)
+            #     # Get the integer taint of the "rel_obj" record (row of "one")
+            #     rel_obj_taints = getattr(rel_obj, "taints", 0)
+            #     # "Union" the integer taints and update the taint of the
+            #     # "rel_obj" object (just the accessed object, not the table!)
+            #     # FIXME: remove the if statement when all models have the "taints" column setup.
+            #     if hasattr(rel_obj, "taints"):
+            #         setattr(rel_obj, "taints", union_to_int(instance_taints, rel_obj_taints))
             return rel_obj
 
     def __set__(self, instance, value):
