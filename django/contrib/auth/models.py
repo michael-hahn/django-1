@@ -10,6 +10,10 @@ from django.utils.translation import gettext_lazy as _
 
 from .validators import UnicodeUsernameValidator
 
+# !!!SPLICE
+from django.splice.db import SpliceDB
+from django.splice.splicefields import SpliceCharField, SpliceEmailField
+
 
 def update_last_login(sender, user, **kwargs):
     """
@@ -319,9 +323,11 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
 
     Username and password are required. Other fields are optional.
     """
+    # !!!SPLICE: We modify non-relational fields in the table to add additional taint/tag columns!
     username_validator = UnicodeUsernameValidator()
 
-    username = models.CharField(
+    # username = models.CharField(
+    username = SpliceCharField(
         _('username'),
         max_length=150,
         unique=True,
@@ -331,9 +337,12 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
             'unique': _("A user with that username already exists."),
         },
     )
-    first_name = models.CharField(_('first name'), max_length=150, blank=True)
-    last_name = models.CharField(_('last name'), max_length=150, blank=True)
-    email = models.EmailField(_('email address'), blank=True)
+    # first_name = models.CharField(_('first name'), max_length=150, blank=True)
+    first_name = SpliceCharField(_('first name'), max_length=150, blank=True)
+    # last_name = models.CharField(_('last name'), max_length=150, blank=True)
+    last_name = SpliceCharField(_('last name'), max_length=150, blank=True)
+    # email = models.EmailField(_('email address'), blank=True)
+    email = SpliceEmailField(_('email address'), blank=True)
     is_staff = models.BooleanField(
         _('staff status'),
         default=False,
@@ -379,7 +388,8 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
         """Send an email to this user."""
         send_mail(subject, message, from_email, [self.email], **kwargs)
 
-
+# !!!SPLICE: Make User taint-aware
+# class User(AbstractUser, SpliceDB):   # UNCOMMENT THIS LINE FOR *ROW-LEVEL* TAINT
 class User(AbstractUser):
     """
     Users within the Django authentication system are represented by this
