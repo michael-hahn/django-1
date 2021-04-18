@@ -13,6 +13,9 @@ from django.db import models
 from django.utils.crypto import get_random_string, salted_hmac
 from django.utils.translation import gettext_lazy as _
 
+# !!!SPLICE
+from django.splice.splicefields import SpliceCharField
+
 
 class BaseUserManager(models.Manager):
 
@@ -46,7 +49,9 @@ class BaseUserManager(models.Manager):
 
 
 class AbstractBaseUser(models.Model):
-    password = models.CharField(_('password'), max_length=128)
+    # !!!SPLICE: We modify non-relational fields in the table to add additional taint/tag columns!
+    # password = models.CharField(_('password'), max_length=128)
+    password = SpliceCharField(_('password'), max_length=128)
     last_login = models.DateTimeField(_('last login'), blank=True, null=True)
 
     is_active = True
