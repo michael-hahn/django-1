@@ -227,7 +227,6 @@ class CharField(Field):
             self.validators.append(validators.MaxLengthValidator(int(max_length)))
         self.validators.append(validators.ProhibitNullCharactersValidator())
 
-    @untrusted
     def to_python(self, value):
         """Return a string."""
         if value not in self.empty_values:
@@ -268,6 +267,8 @@ class IntegerField(Field):
         if min_value is not None:
             self.validators.append(validators.MinValueValidator(min_value))
 
+    # !!!SPLICE: self.re_decimal.sub loses taints and tags from
+    # `value`. We add them back using the @untrusted decorator.
     @untrusted
     def to_python(self, value):
         """
@@ -301,7 +302,6 @@ class FloatField(IntegerField):
         'invalid': _('Enter a number.'),
     }
 
-    @untrusted
     def to_python(self, value):
         """
         Validate that float() can be called on the input. Return the result
@@ -342,7 +342,6 @@ class DecimalField(IntegerField):
         super().__init__(max_value=max_value, min_value=min_value, **kwargs)
         self.validators.append(validators.DecimalValidator(max_digits, decimal_places))
 
-    @untrusted
     def to_python(self, value):
         """
         Validate that the input is a decimal number. Return a Decimal
@@ -409,6 +408,9 @@ class DateField(BaseTemporalField):
         'invalid': _('Enter a valid date.'),
     }
 
+    # !!!SPLICE: Python's datetime package is not fully
+    # modified by Splice. We use the @untrusted decorator.
+    @untrusted
     def to_python(self, value):
         """
         Validate that the input can be converted to a date. Return a Python
@@ -433,6 +435,9 @@ class TimeField(BaseTemporalField):
         'invalid': _('Enter a valid time.')
     }
 
+    # !!!SPLICE: Python's datetime package is not fully
+    # modified by Splice. We use the @untrusted decorator.
+    @untrusted
     def to_python(self, value):
         """
         Validate that the input can be converted to a time. Return a Python
@@ -466,6 +471,9 @@ class DateTimeField(BaseTemporalField):
             value = to_current_timezone(value)
         return value
 
+    # !!!SPLICE: Python's datetime package is not fully
+    # modified by Splice. We use the @untrusted decorator.
+    @untrusted
     def to_python(self, value):
         """
         Validate that the input can be converted to a datetime. Return a
@@ -501,6 +509,9 @@ class DurationField(Field):
             return duration_string(value)
         return value
 
+    # !!!SPLICE: Python's datetime package is not fully
+    # modified by Splice. We use the @untrusted decorator.
+    @untrusted
     def to_python(self, value):
         if value in self.empty_values:
             return None
