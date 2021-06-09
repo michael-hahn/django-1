@@ -32,11 +32,18 @@ from django.utils.ipv6 import clean_ipv6_address
 from django.utils.regex_helper import _lazy_re_compile
 from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
-from django.splice.splicetypes import SpliceInt as int
-from django.splice.splicetypes import SpliceFloat as float
-from django.splice.splicetypes import SpliceStr as str
-from django.splice.splicetypes import SpliceDecimal as Decimal
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# Splice-related imports
+# NOTE: Shadowing builtin types using Splice types should not be
+#       necessary since most type casts now preserve taints
+# from django.splice.splicetypes import SpliceInt as int
+# from django.splice.splicetypes import SpliceFloat as float
+# from django.splice.splicetypes import SpliceStr as str
+# from django.splice.splicetypes import SpliceDecimal as Decimal
+# Note that the @untrusted decorator does nothing when
+# TAINT_OPTIMIZATION is set!
 from django.splice.splice import untrusted
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 
 __all__ = (
@@ -267,8 +274,10 @@ class IntegerField(Field):
         if min_value is not None:
             self.validators.append(validators.MinValueValidator(min_value))
 
-    # !!!SPLICE: self.re_decimal.sub loses taints and tags from
-    # `value`. We add them back using the @untrusted decorator.
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # self.re_decimal.sub loses taint from 'value'. To track taint,
+    # we add them back using the @untrusted decorator.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
     @untrusted
     def to_python(self, value):
         """
@@ -408,8 +417,10 @@ class DateField(BaseTemporalField):
         'invalid': _('Enter a valid date.'),
     }
 
-    # !!!SPLICE: Python's datetime package is not fully
-    # modified by Splice. We use the @untrusted decorator.
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # Python's datetime package is not fully taint-aware. To track
+    # taint, we use the @untrusted decorator.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
     @untrusted
     def to_python(self, value):
         """
@@ -435,8 +446,10 @@ class TimeField(BaseTemporalField):
         'invalid': _('Enter a valid time.')
     }
 
-    # !!!SPLICE: Python's datetime package is not fully
-    # modified by Splice. We use the @untrusted decorator.
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # Python's datetime package is not fully taint-aware. To track
+    # taint, we use the @untrusted decorator.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
     @untrusted
     def to_python(self, value):
         """
@@ -471,8 +484,10 @@ class DateTimeField(BaseTemporalField):
             value = to_current_timezone(value)
         return value
 
-    # !!!SPLICE: Python's datetime package is not fully
-    # modified by Splice. We use the @untrusted decorator.
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # Python's datetime package is not fully taint-aware. To track
+    # taint, we use the @untrusted decorator.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
     @untrusted
     def to_python(self, value):
         """
@@ -509,9 +524,10 @@ class DurationField(Field):
             return duration_string(value)
         return value
 
-    # !!!SPLICE: Python's datetime package is not fully
-    # modified by Splice. We use the @untrusted decorator.
-    @untrusted
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # Python's datetime package is not fully taint-aware. To track
+    # taint, we use the @untrusted decorator.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
     def to_python(self, value):
         if value in self.empty_values:
             return None

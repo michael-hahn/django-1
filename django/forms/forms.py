@@ -16,7 +16,13 @@ from django.utils.translation import gettext as _
 
 from .renderers import get_default_renderer
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related imports
 from django.splice.splice import SpliceMixin
+from django.splice import settings
+from django.splice.identity import TaintSource
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
 
 __all__ = ('BaseForm', 'Form')
 
@@ -386,6 +392,22 @@ class BaseForm:
                 value = self.get_initial_for_field(field, name)
             else:
                 value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+            # _clean_fields is the beginning of data sanitization. 'value' is user
+            # input data, which should be tainted by SpliceTaintMiddleware. With
+            # TAINT_OPTIMIZATION set, we can "turn off" tainting now and let data
+            # sanitization runs without taint propagation (for performance). Once
+            # data sanitization is done (at _post_clean), we can retaint the clean
+            # data. Note that we cannot "turn off" taint at SpliceTaintMiddleware
+            # because there might be other stuff going on between the middleware
+            # and _clean_fields(). But for _clean_fields(), the contract is that
+            # its only purpose is to clean the data and nothing else. If this
+            # contract is not true, then we cannot perform taint optimization.
+            if settings.TAINT_OPTIMIZATION:
+                if isinstance(value, SpliceMixin):
+                    # Turn off tainting (splice types -> regular types)
+                    value = value.unsplicify()
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
             try:
                 if isinstance(field, FileField):
                     initial = self.get_initial_for_field(field, name)
@@ -414,26 +436,36 @@ class BaseForm:
         is complete.
 
         In a regular form, this step is to check that all data in cleaned_data
-        is of Untrusted types and then convert them into regular (trusted) types.
+        is untrusted and then set them to be trusted.
         """
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
         # We do not accumulate errors (call self.add_error())
         # because self.add_error() modifies self.cleaned_data
         # and therefore cannot be called during the iteration.
         # Thus, we immediately raise ValidationError().
-        for name, value in self.cleaned_data.items():
-            if not isinstance(value, SpliceMixin):
-                # TODO: Currently not all form values are converted to Splice values, use pass
-                # raise ValidationError(_("{name} has value {value} of (trusted) type {type}'"
-                #                         .format(name=name, value=value, type=type(value))))
-                pass
-            else:
-                print("({}) {} (Taints: {})".format(type(value), name, value.taints))
-                #  NOTE: to_trusted() 'force' flag is False and it
-                #  is OK because we will never need to forcefully
-                #  convert an untrusted (and synthesized) value to
-                #  its trusted type since value at this step will
-                #  never be a synthesized value (i.e., always from user)
-                self.cleaned_data[name] = value.to_trusted()
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # With TAINT_OPTIMIZATION, we have to re-attach taint.
+        # Tainted data will always be trusted because this is
+        # *after* data sanitization
+        if settings.TAINT_OPTIMIZATION:
+            for name, value in self.cleaned_data.items():
+                self.cleaned_data[name] = SpliceMixin.to_splice(value, True, False, TaintSource.current_user_taint, [])
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        else:
+            for name, value in self.cleaned_data.items():
+                # FIXME: Currently not all form values are converted to Splice types, we add a check here
+                if isinstance(value, SpliceMixin):
+                    # print("BaseForm._post_clean: ({}) {} (Taints: {}, Trusted: {}, Synthesized: {})"
+                    #       .format(type(value), name, value.taints, value.trusted, value.synthesized))
+                    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+                    # to_trusted() 'force' flag is False and it is OK because
+                    # we will never need to forcefully convert an untrusted
+                    # and synthesized value to its trusted type since value
+                    # at this step will never be synthesized (i.e., it will
+                    # always be from the user)
+                    self.cleaned_data[name] = value.to_trusted()
+                    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
     def clean(self):
         """
