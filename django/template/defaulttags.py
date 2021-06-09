@@ -25,6 +25,12 @@ from .defaultfilters import date
 from .library import Library
 from .smartif import IfParser, Literal
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# Splice-related imports
+from django.splice.settings import TAINT_DROP
+from django.splice.splicetypes import SpliceStr
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+
 register = Library()
 
 
@@ -155,8 +161,10 @@ class ForNode(Node):
         )
 
     def render(self, context):
-        # !!!SPLICE: shadow built-in bytes
-        from django.splice.splicetypes import SpliceStr as str
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # Taint should propagate properly through str() if
+        # value is tainted.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
         if 'forloop' in context:
             parentloop = context['forloop']
         else:
@@ -217,10 +225,17 @@ class ForNode(Node):
                     # the context ending up in an inconsistent state when other
                     # tags (e.g., include and with) push data to context.
                     context.pop()
-        # !!!SPLICE: literal str object ('') loses taints and tags
-        # We replace it with an actual object constructor call.
-        # return mark_safe(''.join(nodelist))
-        return mark_safe(str('').join(nodelist))
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # A literal bytes object (b'') loses taint, so if without
+        # optimization (e.g., when TAINT_DROP is not set), we
+        # replace it with an actual SpliceStr constructor call
+        # for proper taint propagation (must be SpliceStr not str
+        # ). No taint needs to be propagated if TAINT_DROP is set
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        if TAINT_DROP:
+            return mark_safe(''.join(nodelist))
+        else:
+            return mark_safe(SpliceStr('').join(nodelist))
 
 
 class IfChangedNode(Node):

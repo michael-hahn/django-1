@@ -11,6 +11,11 @@ from asgiref.local import Local
 
 from django.conf import settings
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related import
+from django.splice.splicetypes import SpliceMixin
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
 __all__ = [
     'utc', 'get_fixed_timezone',
     'get_default_timezone', 'get_default_timezone_name',
@@ -231,7 +236,24 @@ def make_aware(value, timezone=None, is_dst=None):
         timezone = get_current_timezone()
     if hasattr(timezone, 'localize'):
         # This method is available for pytz time zones.
-        return timezone.localize(value, is_dst=is_dst)
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # pytz, similar to a native function, will lose taint
+        # so we have to attach the taint back.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # return timezone.localize(value, is_dst=is_dst)
+        if isinstance(value, SpliceMixin):
+            value_taint = value.taints
+            value_trusted = value.trusted
+            value_synthesized = value.synthesized
+            value_constraints = value.constraints
+            tz_value = timezone.localize(value, is_dst=is_dst)
+            tz_value.taints = value_taint
+            tz_value.trusted = value_trusted
+            tz_value.synthesized = value_synthesized
+            tz_value.constraints = value_constraints
+            return tz_value
+        else:
+            return timezone.localize(value, is_dst=is_dst)
     else:
         # Check that we won't overwrite the timezone of an aware datetime.
         if is_aware(value):

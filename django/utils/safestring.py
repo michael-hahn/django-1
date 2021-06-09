@@ -6,9 +6,14 @@ be interpreted by the HTML engine (e.g. '<') into the appropriate entities.
 """
 
 from functools import wraps
-# !!!SPLICE: shadow built-in str
-from django.splice.splicetypes import SpliceStr as str
-
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# Splice-related imports
+# Note that TAINT_DROP still requires SpliceStr here
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# from django.splice import settings
+from django.splice.splicetypes import SpliceStr
+str_class = SpliceStr
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 class SafeData:
     def __html__(self):
@@ -19,8 +24,14 @@ class SafeData:
         """
         return self
 
-
-class SafeString(str, SafeData):
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# SafeString needs to inherit from SpliceStr when no
+# optimization is set and when TAINT_DROP is set. We
+# will lose taint if it is inherited from built-in
+# str in *both* cases.
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# class SafeString(str, SafeData):
+class SafeString(str_class, SafeData):
     """
     A str subclass that has been specifically marked as "safe" for HTML output
     purposes.

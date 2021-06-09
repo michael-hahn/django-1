@@ -68,6 +68,15 @@ from django.utils.translation import gettext_lazy, pgettext_lazy
 
 from .exceptions import TemplateSyntaxError
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related imports
+from django.splice import settings
+from django.splice.splice import check_tag
+from django.splice.splicetypes import SpliceStr
+from django.core.exceptions import PermissionDenied
+from django.utils.safestring import SafeString
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
 # template syntax constants
 FILTER_SEPARATOR = '|'
 FILTER_ARGUMENT_SEPARATOR = ':'
@@ -932,19 +941,48 @@ class NodeList(list):
     contains_nontext = False
 
     def render(self, context):
-        # !!!SPLICE: shadow built-in str
-        from django.splice.splicetypes import SpliceStr as str
         bits = []
         for node in self:
             if isinstance(node, Node):
                 bit = node.render_annotated(context)
             else:
                 bit = node
-            bits.append(str(bit))
-        # !!!SPLICE: literal str object ('') loses taints and tags
-        # We replace it with an actual object constructor call.
-        # return mark_safe(''.join(bits))
-        return mark_safe(str('').join(bits))
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+            # When TAINT_DROP is set, this is where we check whether content in the
+            # HttpResponse is synthesized or not. The content in 'bit' will later be
+            # converted into bytes in django.http.response. With TAINT_DROP, we stop
+            # taint propagation here so no taint will be propagated to HttpResponse
+            # bytes. This is OK because we have already check synthesis here!
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+            if settings.TAINT_DROP:
+                trusted, synthesized = check_tag(bit, check_synthesis=True)
+                if synthesized:
+                    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+                    # If any content in bit contains synthesized data, the synthesized data
+                    # will be in HttpResponse bytes as well, so we raise exception here.
+                    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+                    raise PermissionDenied("The content of the HttpResponse might contain "
+                                           "synthesized data, which is forbidden. Part or "
+                                           "all of the following is synthesized:\n{}".format(bit))
+            else:
+                # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+                # Without the optimization above, we use str to
+                # ensure that taint propagate properly from bit
+                # If TAINT_DROP is set, we will drop the taint
+                # in the code below (when calling join).
+                # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+                bits.append(str(bit))
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # A literal str object ('') loses taint, so if without
+        # optimization (e.g., when TAINT_DROP is not set), we
+        # replace it with an actual SpliceStr constructor call
+        # for proper taint propagation (must be SpliceStr not
+        # builtin str). No taint in bits if TAINT_DROP is set.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        if settings.TAINT_DROP:
+            return mark_safe(''.join(bits))
+        else:
+            return mark_safe(SpliceStr('').join(bits))
 
     def get_nodes_by_type(self, nodetype):
         "Return a list of all nodes of the given type"
@@ -971,22 +1009,22 @@ def render_value_in_context(value, context):
     means escaping, if required, and conversion to a string. If value is a
     string, it's expected to already be translated.
     """
-    # !!!SPLICE: shadow built-in str
     value = template_localtime(value, use_tz=context.use_tz)
     value = localize(value, use_l10n=context.use_l10n)
     if context.autoescape:
-        # !!!SPLICE: Do not shadow str here. value might be of type
-        #            such as BoundField that is decorated as @html_safe
-        #            In such a case str() will direct the call to
-        #            mark_safe(klass_str(self)). We need those str to
-        #            be marked safe so they do not call escape.
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # Do not use SpliceStr here. The value might be of type
+        # such as BoundField that is decorated as @html_safe.
+        # In such a case str() will direct the call to
+        # mark_safe(klass_str(self)), which means we will get
+        # SafeString, a subtype of SpliceStr anyways. We need
+        # those str to be marked safe so they don't call escape
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
         if not issubclass(type(value), str):
             value = str(value)
         return conditional_escape(value)
     else:
-        # !!!SPLICE: we "shadow" here.
-        from django.splice.splicetypes import SpliceStr
-        return SpliceStr(value)
+        return str(value)
 
 
 class VariableNode(Node):

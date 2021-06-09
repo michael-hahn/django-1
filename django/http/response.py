@@ -19,8 +19,11 @@ from django.utils.encoding import iri_to_uri
 from django.utils.http import http_date
 from django.utils.regex_helper import _lazy_re_compile
 
-# !!!SPLICE: shadow built-in bytes
-from django.splice.splicetypes import SpliceBytes as bytes
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# Splice-related imports
+from django.splice.settings import TAINT_DROP
+from django.splice.splicetypes import SpliceBytes, SpliceStr
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 _charset_from_content_type_re = _lazy_re_compile(r';\s*charset=(?P<charset>[^\s;]+)', re.I)
 
@@ -238,11 +241,33 @@ class HttpResponseBase:
         # Handle string types -- we can't rely on force_bytes here because:
         # - Python attempts str conversion first
         # - when self._charset != 'utf-8' it re-encodes the content
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # make_bytes can lose taint with bytes conversion, so we need to use
+        # SpliceBytes. However, if TAINT_DROP is set, 'value' should have no
+        # taint anyways (because taints are already dropped previously), so we
+        # can use bytes. Note that unlike str() where output becomes SpliceStr
+        # if input is a Splice type (thanks to method decorator of the __str__
+        # method in meta programming), bytes() does not have a __byte__ to be
+        # decorated for automatic conversion. Therefore, even with a Splice
+        # input, bytes() will drop taints and output a builtin bytes object.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        byte_class = SpliceBytes
+        if TAINT_DROP:
+            byte_class = bytes
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # FIXME: memoryview itself might lose taint
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
         if isinstance(value, (bytes, memoryview)):
-            return bytes(value)
+            # return bytes(value)
+            return byte_class(value)
         if isinstance(value, str):
-            return bytes(value.encode(self.charset))
+            # return bytes(value.encode(self.charset))
+            return byte_class(value.encode(self.charset))
         # Handle non-string types.
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+        # Taint should propagate properly through str() if
+        # value is tainted. No change is needed.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
         return str(value).encode(self.charset)
 
     # These methods partially implement the file-like object interface.
@@ -315,19 +340,33 @@ class HttpResponse(HttpResponseBase):
 
     @property
     def content(self):
-        # !!!SPLICE: literal bytes object (b'') loses taints and tags
-        # We replace it with an actual object constructor call.
-        # return b''.join(self._container)
-        return bytes('', encoding='ascii').join(self._container)
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # A literal bytes object (b'') loses taint, so if without
+        # optimization (e.g., when TAINT_DROP is not set), we
+        # replace it with an actual SpliceBytes constructor call
+        # for proper taint propagation. No taint needs to be
+        # propagated if TAINT_DROP is set, however.
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        if TAINT_DROP:
+            return b''.join(self._container)
+        else:
+            return SpliceBytes('', encoding='ascii').join(self._container)
 
     @content.setter
     def content(self, value):
         # Consume iterators upon assignment to allow repeated iteration.
         if hasattr(value, '__iter__') and not isinstance(value, (bytes, str)):
-            # !!!SPLICE: literal bytes object (b'') loses taints and tags
-            # We replace it with an actual object constructor call.
-            # content = b''.join(self.make_bytes(chunk) for chunk in value)
-            content = bytes('', encoding='ascii').join(self.make_bytes(chunk) for chunk in value)
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+            # A literal bytes object (b'') loses taint, so if without
+            # optimization (e.g., when TAINT_DROP is not set), we
+            # replace it with an actual SpliceBytes constructor call
+            # for proper taint propagation. No taint needs to be
+            # propagated if TAINT_DROP is set, however.
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+            if TAINT_DROP:
+                content = b''.join(self.make_bytes(chunk) for chunk in value)
+            else:
+                content = SpliceBytes('', encoding='ascii').join(self.make_bytes(chunk) for chunk in value)
             if hasattr(value, 'close'):
                 try:
                     value.close()

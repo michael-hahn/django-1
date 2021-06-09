@@ -40,8 +40,10 @@ def escape(text):
     This may result in double-escaping. If this is a concern, use
     conditional_escape() instead.
     """
-    # !!!SPLICE: shadow built-in bytes
-    from django.splice.splicetypes import SpliceStr as str
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+    # Taint should propagate properly through str() if
+    # value is tainted (no change needed from Splice).
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
     return mark_safe(html.escape(str(text)))
 
 
@@ -98,8 +100,10 @@ def conditional_escape(text):
     This function relies on the __html__ convention used both by Django's
     SafeData class and by third-party libraries like markupsafe.
     """
-    # !!!SPLICE: shadow built-in bytes
-    from django.splice.splicetypes import SpliceStr as str
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+    # Taint should propagate properly through str() if
+    # value is tainted.
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
     if isinstance(text, Promise):
         text = str(text)
     if hasattr(text, '__html__'):
