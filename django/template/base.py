@@ -964,14 +964,13 @@ class NodeList(list):
                     raise PermissionDenied("The content of the HttpResponse might contain "
                                            "synthesized data, which is forbidden. Part or "
                                            "all of the following is synthesized:\n{}".format(bit))
-            else:
-                # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
-                # Without the optimization above, we use str to
-                # ensure that taint propagate properly from bit
-                # If TAINT_DROP is set, we will drop the taint
-                # in the code below (when calling join).
-                # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
-                bits.append(str(bit))
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+            # Without the optimization above, we use str to
+            # ensure that taint propagate properly from bit
+            # If TAINT_DROP is set, we will drop the taint
+            # in the code below (when calling join).
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+            bits.append(str(bit))
         # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
         # A literal str object ('') loses taint, so if without
         # optimization (e.g., when TAINT_DROP is not set), we
