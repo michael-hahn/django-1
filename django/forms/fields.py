@@ -10,7 +10,10 @@ import operator
 import os
 import re
 import uuid
-from decimal import Decimal, DecimalException
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice changes how Decimal is imported, see later
+from decimal import DecimalException
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
@@ -34,15 +37,23 @@ from django.utils.translation import gettext_lazy as _, ngettext_lazy
 
 # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 # Splice-related imports
-# NOTE: Shadowing builtin types using Splice types should not be
-#       necessary since most type casts now preserve taints
-# from django.splice.splicetypes import SpliceInt as int
-# from django.splice.splicetypes import SpliceFloat as float
-# from django.splice.splicetypes import SpliceStr as str
-# from django.splice.splicetypes import SpliceDecimal as Decimal
+from django.splice.splicetypes import SpliceInt
+from django.splice.splicetypes import SpliceFloat
+from django.splice.splicetypes import SpliceDecimal
 # Note that the @untrusted decorator does nothing when
 # TAINT_OPTIMIZATION is set!
 from django.splice.splice import untrusted
+from django.splice import settings
+import builtins
+import decimal
+# If TAINT_OPTIMIZATION is set, we "turn off taint propagation.
+int = SpliceInt
+float = SpliceFloat
+Decimal = SpliceDecimal
+if settings.TAINT_OPTIMIZATION:
+    int = builtins.int
+    float = builtins.float
+    Decimal = decimal.Decimal
 # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 

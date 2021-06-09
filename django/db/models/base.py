@@ -38,6 +38,12 @@ from django.utils.hashable import make_hashable
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext_lazy as _
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related imports
+from django.splice.splice import SpliceMixin
+from django.splice.settings import TAINT_OPTIMIZATION
+from django.splice.identity import TaintSource
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 
 class Deferred:
     def __repr__(self):
@@ -1206,6 +1212,10 @@ class Model(metaclass=ModelBase):
             exclude = list(exclude)
 
         try:
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+            # For each field we will retaint the data in the database if TAINT_OPTIMIZATION
+            # is set beccause we did not propagate the taint to the database.
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
             self.clean_fields(exclude=exclude)
         except ValidationError as e:
             errors = e.update_error_dict(errors)
@@ -1247,8 +1257,25 @@ class Model(metaclass=ModelBase):
             raw_value = getattr(self, f.attname)
             if f.blank and raw_value in f.empty_values:
                 continue
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+            # If TAINT_OPTIMIZATION is set, we can turn off the taint
+            # here so that raw_value, when being cleaned, does not
+            # propagate taint.
+            if TAINT_OPTIMIZATION:
+                if isinstance(raw_value, SpliceMixin):
+                    raw_value = raw_value.unsplicify()
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
             try:
-                setattr(self, f.attname, f.clean(raw_value, self))
+                # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+                # If TAINT_OPTIMIZATION is set, we need to retaint here
+                # This is similar to the step in _post_clean @ forms.py
+                # setattr(self, f.attname, f.clean(raw_value, self))
+                value = f.clean(raw_value, self)
+                if TAINT_OPTIMIZATION:
+                    value = SpliceMixin.to_splice(value, True, False,
+                                                  TaintSource.current_user_taint, [])
+                setattr(self, f.attname, value)
+                # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
             except ValidationError as e:
                 errors[f.name] = e.error_list
 
