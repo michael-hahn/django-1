@@ -35,3 +35,12 @@ TAINT_OPTIMIZATION = False
 # optimization is specific to HttpResponse.
 ##########################################################
 TAINT_DROP = False
+##########################################################
+# We Use bitarray to represent user's taint if BITARRAY is
+# set to be True. However, preference should be given to
+# using built-in int instead of bitarray since int is more
+# performant than bitarray. We keep the old implementation
+# of using bitarray only for comparison purposes. Ref:
+# https://stackoverflow.com/a/20846054/9632613
+##########################################################
+BITARRAY = False
