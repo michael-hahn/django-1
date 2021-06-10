@@ -14,6 +14,15 @@ from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from django.utils.duration import duration_microseconds
 from django.utils.functional import cached_property
 
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# NOTE THAT WE NO LONGER MAINTAIN SQLITE3, SO THE
+# CHANGES MIGHT BE INCOMPLETE. WE USE POSTGRESQL
+# FOR EVALUATION INSTEAD.
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related import
+from django.splice.splicetypes import SpliceMixin
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 
 class DatabaseOperations(BaseDatabaseOperations):
     cast_char_field_without_max_length = 'text'
@@ -240,7 +249,23 @@ class DatabaseOperations(BaseDatabaseOperations):
         # SQLite doesn't support tz-aware datetimes
         if timezone.is_aware(value):
             if settings.USE_TZ:
-                value = timezone.make_naive(value, self.connection.timezone)
+                # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+                # timezone package loses taint, so we have to add
+                # them back manually
+                # value = timezone.make_naive(value, self.connection.timezone)
+                if isinstance(value, SpliceMixin):
+                    value_taints = value.taints
+                    value_synthesized = value.synthesized
+                    value_trusted = value.trusted
+                    value_constraints = value.constraints
+                    value = timezone.make_naive(value, self.connection.timezone)
+                    value.taints = value_taints
+                    value.synthesized = value_synthesized
+                    value.trusted = value_trusted
+                    value.constraints = value_constraints
+                else:
+                    value = timezone.make_naive(value, self.connection.timezone)
+                # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
             else:
                 raise ValueError("SQLite backend does not support timezone-aware datetimes when USE_TZ is False.")
 
