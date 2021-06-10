@@ -1167,7 +1167,7 @@ class SQLCompiler:
             #            Therefore, we will only perform SQL execution on the original
             #            query if result_type is not SINGLE.
             if result_type != SINGLE:
-                print("SQL (Non-SINGLE): {} ({})".format(sql, params))
+                # print("SQL (Non-SINGLE): {} ({})".format(sql, params))
                 cursor.execute(sql, params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)

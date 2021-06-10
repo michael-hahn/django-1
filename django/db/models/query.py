@@ -81,8 +81,12 @@ class ModelIterable(BaseIterable):
             #            try this way and see.
             # TODO: Does this also fix foreign key objects for retrieval? (It
             #  seems so from unit test cases but should double check.)
-            print(init_list)
-            print(row)
+            # NOTE: It turns out that for different database backend, row is represented
+            #       differently. For example, while a row is a list in SQLite, it is
+            #       implemented as a tuple in PostgreSQL. If it is a tuple, we cannot
+            #       reassign Splice* values (see the last part in the for-loop), so we
+            #       must convert row into a list first.
+            row = list(row)
             for pos, attname in enumerate(init_list):
                 if attname.endswith("_taint"):
                     # If we have a taint column fetched from the database, we should
@@ -91,19 +95,34 @@ class ModelIterable(BaseIterable):
                     tagname = dataname + "_synthesized" # The name of the corresponding synthesized tag column
                     try:
                         data_pos = init_list.index(dataname)
-                    except ValueError as e:
-                        raise("Query fetched a taint without its corresponding data")
+                    except ValueError:
+                        raise ValueError("Query fetched a taint without its corresponding data")
                     try:
                         tag_pos = init_list.index(tagname)
-                    except ValueError as e:
-                        raise("Query fetched a taint without its corresponding synthesized tag")
+                    except ValueError:
+                        raise ValueError("Query fetched a taint without its corresponding synthesized tag")
                     # Get actual taint and tag and assign them to the data in row
                     taint = row[pos]
                     tag = row[tag_pos]
-                    row[data_pos] = SpliceMixin.to_splice(row[data_pos],
-                                                          trusted=not tag,
-                                                          synthesized=tag,
-                                                          taints=to_bitarray(taint))
+                    if row[data_pos] is not None:   # None value may be returned after deletion occurred
+                        row[data_pos] = SpliceMixin.to_splice(row[data_pos],
+                                                              # NOTE: Data stored in a database is always considered
+                                                              #       *untrusted* (regardless of whether the value is
+                                                              #       actually synthesized) because of the possibility
+                                                              #       that the value can be synthesized. Marking data
+                                                              #       untrusted allows the type system to always check
+                                                              #       before use (i.e., defensive programming).
+                                                              trusted=False,
+                                                              synthesized=tag,
+                                                              taints=to_bitarray(taint),
+                                                              constraints=[])
+                    # NOTE: Since deleted values (because of splice) in the database is None,
+                    #       no special taint checking is needed to ensure that synthesized
+                    #       data is not "leaked" from the database! If, however, we actually
+                    #       synthesize fake values for spliced cells in a database table, we
+                    #       must ensure here that queried values do not contain synthesized
+                    #       data (or require user to always perform defensive programming
+                    #       before using queried data in the application)!
             obj = model_cls.from_db(db, init_list, row[model_fields_start:model_fields_end])
             # !!!SPLICE: Propagate taints from query results. Each 'row' contains one result,
             #            which is then mapped to a model instance 'obj'. The mapping code

@@ -1,6 +1,7 @@
 from django.db.models import Model
 from django.splice.splice import SpliceMixin, is_synthesized
 from django.splice.identity import empty_taint, union, to_int, to_bitarray
+from django.splice import settings
 import re
 import sqlparse
 
@@ -34,16 +35,14 @@ def __debug_sql(sql, is_rewrite=False):
 
 
 def cursor_iter(cursor, sentinel, col_count, itersize):
-    """
-    Yield blocks of rows from a cursor
-    done.
-    """
+    """Yield blocks of rows from a cursor"""
     for rows in iter((lambda: cursor.fetchmany(itersize)), sentinel):
         yield rows if col_count is None else [r[:col_count] for r in rows]
 
 
 def sql_rewrite_execute(cursor, sql, params, col_count):
-    __debug_sql(sql)
+    if settings.SPLICE_DEBUG:
+        __debug_sql(sql)
     # If the query string contains more than one SQL statement,
     # typically separated by semi-colons, we split it into a
     # list of single statements. We will rewrite the queries one
@@ -65,7 +64,7 @@ def sql_rewrite_execute(cursor, sql, params, col_count):
     # The next non-whitespace token should either be an IdentifierList token, a
     # single Identifier token, or a Function token. Except for Function tokens,
     # we need to make sure they are aggregate operations (to check the case where
-    # has_results()  in compiler.py is the calling method of execute_sql()). If
+    # has_results() in compiler.py is the calling method of execute_sql()). If
     # we see any token that is not an aggregate operation, we do a regular execute
     # and return.
     if type(stmt.tokens[i]) == sqlparse.sql.Function:
@@ -123,7 +122,8 @@ def sql_rewrite_identifier_execute(cursor, stmt, i, params, col_count, close=Tru
     if func_name == 'COUNT':
         # No rewrite
         try:
-            __debug_sql(str(stmt), True)
+            if settings.SPLICE_DEBUG:
+                __debug_sql(str(stmt), True)
             cursor.execute(str(stmt), params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)
@@ -163,7 +163,8 @@ def sql_rewrite_identifier_execute(cursor, stmt, i, params, col_count, close=Tru
         stmt.insert_before(i, distinct_token)
         # Execute the new query to get all taints
         try:
-            __debug_sql(str(stmt), True)
+            if settings.SPLICE_DEBUG:
+                __debug_sql(str(stmt), True)
             cursor.execute(str(stmt), params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)
@@ -181,7 +182,8 @@ def sql_rewrite_identifier_execute(cursor, stmt, i, params, col_count, close=Tru
         # We need to remove some other tokens by setting it to a whitespace token
         stmt.tokens[i + 2] = whitespace_token
         try:
-            __debug_sql(str(stmt), True)
+            if settings.SPLICE_DEBUG:
+                __debug_sql(str(stmt), True)
             cursor.execute(str(stmt), params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)
@@ -204,7 +206,8 @@ def sql_rewrite_identifier_execute(cursor, stmt, i, params, col_count, close=Tru
         stmt.tokens[i] = identifier_list_token
         # Execute the new query
         try:
-            __debug_sql(str(stmt), True)
+            if settings.SPLICE_DEBUG:
+                __debug_sql(str(stmt), True)
             cursor.execute(str(stmt), params)
         except Exception:
             # Might fail for server-side cursors (e.g. connection closed)
