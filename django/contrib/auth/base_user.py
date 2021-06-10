@@ -13,8 +13,10 @@ from django.db import models
 from django.utils.crypto import get_random_string, salted_hmac
 from django.utils.translation import gettext_lazy as _
 
-# !!!SPLICE
-from django.splice.splicefields import SpliceCharField
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related import
+from django.splice.splicefields import SpliceCharField, SpliceDateTimeField
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 
 
 class BaseUserManager(models.Manager):
@@ -47,12 +49,16 @@ class BaseUserManager(models.Manager):
     def get_by_natural_key(self, username):
         return self.get(**{self.model.USERNAME_FIELD: username})
 
-
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# We modify non-relational fields in the table to expand DB table columns for taint
+# Note that fields must allow NULL values for deletion (we add this even if it was
+# not allowed in the original design).
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 class AbstractBaseUser(models.Model):
-    # !!!SPLICE: We modify non-relational fields in the table to add additional taint/tag columns!
     # password = models.CharField(_('password'), max_length=128)
-    password = SpliceCharField(_('password'), max_length=128)
-    last_login = models.DateTimeField(_('last login'), blank=True, null=True)
+    password = SpliceCharField(_('password'), max_length=128, null=True)
+    # last_login = models.DateTimeField(_('last login'), blank=True, null=True)
+    last_login = SpliceDateTimeField(_('last login'), blank=True, null=True)
 
     is_active = True
 

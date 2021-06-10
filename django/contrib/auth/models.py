@@ -12,7 +12,7 @@ from .validators import UnicodeUsernameValidator
 
 # !!!SPLICE
 from django.splice.db import SpliceDB
-from django.splice.splicefields import SpliceCharField, SpliceEmailField
+from django.splice.splicefields import SpliceCharField, SpliceEmailField, SpliceDateTimeField
 
 
 def update_last_login(sender, user, **kwargs):
@@ -315,7 +315,11 @@ class PermissionsMixin(models.Model):
 
         return _user_has_module_perms(self, app_label)
 
-
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# We modify non-relational fields in the table to expand DB table columns for taint
+# Note that fields must allow NULL values for deletion (we add this even if it was
+# not allowed in the original design).
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 class AbstractUser(AbstractBaseUser, PermissionsMixin):
     """
     An abstract base class implementing a fully featured User model with
@@ -323,7 +327,6 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
 
     Username and password are required. Other fields are optional.
     """
-    # !!!SPLICE: We modify non-relational fields in the table to add additional taint/tag columns!
     username_validator = UnicodeUsernameValidator()
 
     # username = models.CharField(
@@ -336,13 +339,14 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
         error_messages={
             'unique': _("A user with that username already exists."),
         },
+        null=True
     )
     # first_name = models.CharField(_('first name'), max_length=150, blank=True)
-    first_name = SpliceCharField(_('first name'), max_length=150, blank=True)
+    first_name = SpliceCharField(_('first name'), max_length=150, blank=True, null=True)
     # last_name = models.CharField(_('last name'), max_length=150, blank=True)
-    last_name = SpliceCharField(_('last name'), max_length=150, blank=True)
+    last_name = SpliceCharField(_('last name'), max_length=150, blank=True, null=True)
     # email = models.EmailField(_('email address'), blank=True)
-    email = SpliceEmailField(_('email address'), blank=True)
+    email = SpliceEmailField(_('email address'), blank=True, null=True)
     is_staff = models.BooleanField(
         _('staff status'),
         default=False,
@@ -356,7 +360,8 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
             'Unselect this instead of deleting accounts.'
         ),
     )
-    date_joined = models.DateTimeField(_('date joined'), default=timezone.now)
+    # date_joined = models.DateTimeField(_('date joined'), default=timezone.now)
+    date_joined = SpliceDateTimeField(_('date joined'), default=timezone.now, null=True)
 
     objects = UserManager()
 
@@ -388,7 +393,10 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
         """Send an email to this user."""
         send_mail(subject, message, from_email, [self.email], **kwargs)
 
-# !!!SPLICE: Make User taint-aware
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# We also have implementation for row-level taint storage by using SpliceDB. At the
+# moment, however, we use a finer-grained cell-level taint storage.
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 # class User(AbstractUser, SpliceDB):   # UNCOMMENT THIS LINE FOR *ROW-LEVEL* TAINT
 class User(AbstractUser):
     """
