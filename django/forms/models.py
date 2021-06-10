@@ -19,8 +19,12 @@ from django.utils.deprecation import RemovedInDjango40Warning
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext, gettext_lazy as _
 
-# !!!SPLICE
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+# Splice-related imports
 from django.splice.splice import SpliceMixin
+from django.splice import settings
+from django.splice.identity import TaintSource
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 
 __all__ = (
     'ModelForm', 'BaseModelForm', 'model_to_dict', 'fields_for_model',
@@ -405,6 +409,12 @@ class BaseModelForm(BaseForm):
             self._update_errors(e)
 
         try:
+            # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+            # Unlike _post_clean() in forms.py, if we set TAINT_OPTIMIZATION, we need to
+            # retaint the database because taints are not there when data is stored to the
+            # database the first time (because of TAINT_OPTIMIZATION). We will "retaint"
+            # the database in full_clean()
+            # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
             self.instance.full_clean(exclude=exclude, validate_unique=False)
         except ValidationError as e:
             self._update_errors(e)
@@ -412,15 +422,6 @@ class BaseModelForm(BaseForm):
         # Validate uniqueness if needed.
         if self._validate_unique:
             self.validate_unique()
-
-        # !!!SPLICE: Similar to _post_clean() in forms.py, after
-        # all the validation, model form data should be trusted.
-        for name, field in self.fields.items():
-            if name in exclude:
-                continue
-            value = getattr(self.instance, name)
-            if isinstance(value, SpliceMixin):
-                value.trusted = True
 
 
     def validate_unique(self):
