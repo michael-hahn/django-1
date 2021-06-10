@@ -9,7 +9,7 @@ additional columns accordingly. This SpliceFieldMixin is useful for cell-level t
 
 from django.db import models
 from django.splice.splice import add_taints
-from django.splice.splicetypes import SpliceMixin, SpliceStr, SpliceInt
+from django.splice.splicetypes import SpliceMixin, SpliceStr, SpliceInt, SpliceFloat, SpliceDatetime
 from django.splice.identity import to_int, to_bitarray
 
 
@@ -19,7 +19,12 @@ type_dict = {'SpliceIntegerField': SpliceInt,
              'SplicePositiveSmallIntegerField': SpliceInt,
              'SpliceCharField': SpliceStr,
              'SpliceSlugField': SpliceStr,
-             'SpliceEmailField': SpliceStr,}
+             'SpliceEmailField': SpliceStr,
+             'SpliceTextField': SpliceStr,
+             'SpliceGenericIPAddressField': SpliceStr,
+             'SpliceFloatField': SpliceFloat,
+             'SpliceDateTimeField': SpliceDatetime,
+             }
 
 
 class SpliceDescriptor(object):
@@ -43,7 +48,8 @@ class SpliceDescriptor(object):
         data = instance.__dict__
         val = data[self.field.name]
         if val is None:
-            print("SpliceDescriptor.__get__({}): value is None".format(self.field.name))
+            # val can be None, for example, when deletion has occurred in the past
+            # print("SpliceDescriptor.__get__({}): value is None".format(self.field.name))
             return None
         taints = getattr(instance, self.taint_field_name)
         synthesized = getattr(instance, self.synthesized_field_name)
@@ -66,9 +72,14 @@ class SpliceDescriptor(object):
                 raise AttributeError('Cannot find any registered Splice data type for {}'
                                      .format(self.field.__class__.__qualname__))
             return cls.splicify(val,
-                                trusted=not synthesized,    # We can derive the trusted flag from the synthesized flag.
+                                # NOTE: Data stored in a database is always considered *untrusted*
+                                #       (regardless of whether the value is synthesized) because
+                                #       of the possibility that the value can be synthesized. Marking
+                                #       data untrusted allows the type system to always check before use.
+                                trusted=False,
                                 synthesized=synthesized,
-                                taints=to_bitarray(taints))
+                                taints=to_bitarray(taints),
+                                constraints=[])
 
     def __set__(self, instance, value):
         if isinstance(value, SpliceMixin):
@@ -118,3 +129,7 @@ SpliceEmailField = type("SpliceEmailField", (SpliceFieldMixin, models.EmailField
 SpliceSlugField = type("SpliceSlugField", (SpliceFieldMixin, models.SlugField,), {})
 SplicePositiveSmallIntegerField = type("SplicePositiveSmallIntegerField",
                                        (SpliceFieldMixin, models.PositiveSmallIntegerField,), {})
+SpliceFloatField = type("SpliceFloatField", (SpliceFieldMixin, models.FloatField), {})
+SpliceTextField = type("SpliceTextField", (SpliceFieldMixin, models.TextField), {})
+SpliceDateTimeField = type("SpliceDateTimeField", (SpliceFieldMixin, models.DateTimeField), {})
+SpliceGenericIPAddressField = type("SpliceGenericIPAddressField", (SpliceFieldMixin, models.GenericIPAddressField), {})
