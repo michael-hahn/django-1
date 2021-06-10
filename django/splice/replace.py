@@ -57,15 +57,26 @@ def _replace_attribute(source, rel, new):
 
 def _replace_indexval(source, rel, new):
     if isinstance(source, tuple):
-        temp = list(source)
-        temp[rel] = new
-        replace(source, tuple(temp))
+        # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+        # FIXME: Unfortunately, replacing tuple objects lead to errors difficult to
+        #  debug. We will leave this for future work. For now, to avoid this issue,
+        #  we should avoid e.g., saving tuples in data structures in evaluation.
+        #  The next three lines of code cause the error and thus commented out.
+        # temp = list(source)
+        # temp[rel] = new
+        # replace(source, tuple(temp))
+        # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
         return
     source[rel] = new
 
 
 def _replace_indexkey(source, rel, new):
-    source[new] = source.pop(source.keys()[rel])
+    # !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+    # 'dict_keys' object is not subscriptable in Python
+    # 3, so we convert it into a list first.
+    # source[new] = source.pop(source.keys()[rel])
+    source[new] = source.pop(list(source.keys())[rel])
+    # =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
 
 
 def _replace_interattr(source, rel, new):
