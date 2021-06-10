@@ -4,6 +4,7 @@ Multiple middlewares are defined here due to middleware ordering and required ti
 """
 
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+from django.core.cache import cache
 from django.splice.splice import is_synthesized, to_untrusted, add_taints
 from django.splice.splicetypes import SpliceMixin, SpliceStr, SpliceBytes
 from django.splice.identity import TaintSource, set_current_user_id, empty_taint, to_int, get_taint_from_id
@@ -415,6 +416,27 @@ class SpliceDeletionMiddleware(object):
             logger.info(",delete,program state,{},{}/{} objects deleted ({} deleted objects are synthesized)"
                         .format(time.perf_counter() - start_timer, obj_deleted, len(objs), obj_synthesized))
 
+            # If TAINT_DROP is set, some cached HttpResponse may not contain any taint
+            # because taint has already dropped when the response is being rendered (for
+            # performance optimization). This can be problematic because Splice can no
+            # longer identify user data in those cached responses. For correctness and
+            # simplicity, we remove everything from the cache. Note that:
+            # 1) Django allows different caches and cache backends to exist simultaneously,
+            #    so it is possible to put all HttpResponse caches in a specific cache so
+            #    that other valid cached data is not cleared. This minimizes the negative
+            #    impact on caching when a user is being spliced.
+            # 2) Even if only one cache is used, deletion-aware developers can set all
+            #    HttpResponse caches with for example the same cache key prefixing, or
+            #    use any separation mechanism described in the Django's cache doc:
+            #    https://docs.djangoproject.com/en/3.0/topics/cache/#accessing-the-cache
+            # 3) Even if no changes are made to cache to help reduce cache performance
+            #    like in 1) and 2), it is still OK to clear out the entire cache given
+            #    that deletion (splice) is rare.
+            # Note that in our current design, everything *except* data structure data
+            # (which is in-memory data stored in a different Redis cache and properly
+            # tainted) is cleared out when TAINT_DROP is set for simplicity.
+            if settings.TAINT_DROP:
+                cache.clear()
             # Generate a response directly to return to the user.
             # After deletion is done, redirect the user to the login page.
             response = HttpResponseRedirect(reverse('lfs_login'))
