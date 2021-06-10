@@ -1,9 +1,10 @@
 """Hash table, synthesizable hash table, and synthesizable dict."""
-
+# from django.splice.replace import replace
 from collections import UserDict
 
 from django.splice.splicetypes import SpliceInt, SpliceStr
 from django.splice.synthesis import IntSynthesizer, StrSynthesizer
+from django.splice.structs import SpliceStructMixin
 
 
 class HashTable(object):
@@ -168,5 +169,106 @@ class SynthesizableDict(UserDict):
         del self.data[key]
 
 
+class SpliceDict(SpliceStructMixin, UserDict):
+    """
+    Inherit from UserDict to create a custom dict that
+    behaves exactly like Python's built-in dict but 1)
+    any insertion converts input data into an untrusted
+    Splice value if possible; 2) gives symbolic constraints
+    to keys by defining this structure as their referrers;
+    and 3) defines additional method (hash) that will be
+    invoked during constraint concretization.
+    """
+    def enclosing(self, obj):
+        """Not needed in this data structure, but we must define here."""
+        pass
+
+    def __setitem__(self, key, item):
+        """
+         Convert value into an untrusted Splice value. Only
+         give "key" symbolic constraints because constraints
+         defined in this data structure are only for keys.
+         We then UserDict's __setitem__ to perform actual insert.
+         """
+        key = self.splicify(key, concretize_cb=self.concretize_cb("eq(hash, hash())"))
+        item = self.splicify(item, concretize_cb=None)
+        super().__setitem__(key, item)
+
+    # Method called by synthesis constraints ===========
+    @staticmethod
+    def hash(item):
+        """
+        This method is used as function input to "eq"
+        constraint. Technically this hash should also be
+        the one that SpliceStr uses to hash itself for
+        the dict, so that the original and the synthesized
+        strings both have the same hash value through the
+        same hash function.
+        """
+        if isinstance(item, str):
+            item = bytes(item, 'ascii')
+        h = 0
+        for byte in item:
+            h = h * 31 + byte
+        return h
+
+
 if __name__ == "__main__":
-    pass
+    from django.splice.splicetypes import SpliceMixin, SpliceInt
+    from django.splice.identity import empty_taint
+    from django.splice.synthesis import init_synthesizer
+    from django.splice.constraints import merge_constraints
+    import gc
+    import os
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.settings")
+
+    # Set up a SpliceDict instance
+    taint = empty_taint()
+    taint[30] = True
+    ka = SpliceStr("ABCDE", trusted=True, synthesized=False, taints=taint)
+    va = SpliceInt(12345, trusted=True, synthesized=False, taints=taint)
+    kb = SpliceStr("FGHI", trusted=True, synthesized=False, taints=taint)
+    vb = SpliceInt(9876, trusted=True, synthesized=False, taints=taint)
+    kc = SpliceStr("JKLM", trusted=True, synthesized=False, taints=taint)
+    vc = SpliceInt(34567, trusted=True, synthesized=False, taints=taint)
+    taint2 = empty_taint()
+    taint2[8] = True
+    kd = SpliceStr("NOPQR", trusted=True, synthesized=False, taints=taint2)
+    vd = SpliceInt(12456, trusted=True, synthesized=False, taints=taint2)
+    d = SpliceDict()
+    d[ka] = va
+    d[kb] = vb
+    d[kc] = vc
+    d[kd] = vd
+
+    # Test GC
+    objs = gc.get_objects()
+    for obj in objs:
+        # Only Splice objects with the taint of the user to be deleted need to be synthesized.
+        if isinstance(obj, SpliceMixin) and obj.taints == taint:
+            # Perform Splice object deletion through synthesis.
+            synthesizer = init_synthesizer(obj)
+            # Concretize constraints for obj using symbolic constraints from its
+            # enclosing data structure.
+            concrete_constraints = []
+            for constraint in obj.constraints:
+                concrete_constraints.append(constraint(obj))
+            # Merge all concrete constraints, if needed
+            if not concrete_constraints:
+                merged_constraints = None
+            else:
+                merged_constraints = concrete_constraints[0]
+                for concrete_constraint in concrete_constraints[1:]:
+                    merged_constraints = merge_constraints(merged_constraints, concrete_constraint)
+            # Synthesis handles setting trusted and synthesized flags properly
+            synthesized_obj = synthesizer.splice_synthesis(merged_constraints)
+            if synthesized_obj is not None:
+                # If synthesis was successful, replace the original obj with the synthesized object.
+                replace(obj, synthesized_obj)
+            else:
+                # If synthesis failed for some reason, the best we can do is to change object attributes.
+                obj.trusted = False
+                obj.synthesized = True
+                obj.taints = empty_taint()
+                obj.constraints = []
