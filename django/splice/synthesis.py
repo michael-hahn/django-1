@@ -1,12 +1,5 @@
 """
 Synthesis classes.
-
-All values added to a Z3 constraint solver should be converted
-to a regular Python type using to_trusted(), instead of using the
-Splice type since Z3 might perform type coercion through e.g.,
-str() which violates our policy. When using to_trusted(),
-'forced' argument is set to be True because it is OK to synthesize
-a value using constraints that are also synthesized.
 """
 
 from z3 import Solver, sat
@@ -19,8 +12,8 @@ from z3 import And, Or, If
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from django.splice.splice import to_trusted
 from django.splice.splicetypes import SpliceInt, SpliceFloat, SpliceStr, SpliceDatetime
+from django.splice.identity import empty_taint
 
 
 class Synthesizer(ABC):
@@ -40,9 +33,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var < to_trusted(v, True))
+                self.solver.add(self.var < v)
         else:
-            self.solver.add(self.var < to_trusted(values, True))
+            self.solver.add(self.var < values)
 
     def gt_constraint(self, values, **kwargs):
         """
@@ -55,13 +48,13 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var > to_trusted(v, True))
+                self.solver.add(self.var > v)
         else:
-            self.solver.add(self.var > to_trusted(values, True))
+            self.solver.add(self.var > values)
 
     def eq_constraint(self, func, value, **kwargs):
         """
-        Add to solver an equal-to constraints:
+        Add to solver an equal-to constraint:
         func(self.var, **kwargs) == value. Note that
         func can be any custom function but operations
         in func must be supported by the Z3 variable
@@ -75,7 +68,14 @@ class Synthesizer(ABC):
         Note that func can return self.var itself to
         create a trivial equal-to constraint.
         """
-        self.solver.add(func(self.var, **kwargs) == to_trusted(value, True))
+        self.solver.add(func(self.var, **kwargs) == value)
+
+    def ne_constraint(self, value, **kwargs):
+        """
+        Add to solver an not-equal-to constraint. self.var
+        can be any value but "value" in the argument.
+        """
+        self.solver.add(self.var != value)
 
     def le_constraint(self, values, **kwargs):
         """
@@ -89,9 +89,9 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var <= to_trusted(v, True))
+                self.solver.add(self.var <= v)
         else:
-            self.solver.add(self.var <= to_trusted(values, True))
+            self.solver.add(self.var <= values)
 
     def ge_constraint(self, values, **kwargs):
         """
@@ -105,15 +105,18 @@ class Synthesizer(ABC):
         """
         if isinstance(values, list):
             for v in values:
-                self.solver.add(self.var >= to_trusted(v, True))
+                self.solver.add(self.var >= v)
         else:
-            self.solver.add(self.var >= to_trusted(values, True))
+            self.solver.add(self.var >= values)
 
-    def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
+    def bounded_constraints(self, upper_bound, lower_bound, include_upper=False, include_lower=False, **kwargs):
         """
         Add to solver constraints derived from an upper bound and
-        a lower bound (not inclusive), both of which must exist (if
-        not, call either lt_constraint() or gt_constraint() instead).
+        a lower bound, both of which must exist (if not, call either
+        lt_constraint(), le_constraint(), gt_constraint(), or
+        ge_constraint() instead). If include_upper is True, upper
+        bound is included. If include_lower is True, lower bound is
+        included. Default for both are False.
         A subclass can override this function if the synthesizer
         allows different bounded constraints. Note that this function
         is implemented mostly for convenience; In most all cases,
@@ -121,8 +124,18 @@ class Synthesizer(ABC):
         to create the same bounded constraints. In some cases like
         string, however, this function should be overridden.
         """
-        self.lt_constraint(upper_bound)
-        self.gt_constraint(lower_bound)
+        if include_upper and include_lower:
+            self.le_constraint(upper_bound)
+            self.ge_constraint(lower_bound)
+        elif include_upper:
+            self.le_constraint(upper_bound)
+            self.gt_constraint(lower_bound)
+        elif include_lower:
+            self.lt_constraint(upper_bound)
+            self.ge_constraint(lower_bound)
+        else:
+            self.lt_constraint(upper_bound)
+            self.gt_constraint(lower_bound)
 
     def is_satisfied(self):
         """Returns True if given constraints can be satisfied."""
@@ -159,24 +172,19 @@ class Synthesizer(ABC):
         raise NotImplementedError("to_python() is not overridden in this subclass, "
                                   "subclassed from the abstract Synthesizer class.")
 
-    def bounded_synthesis(self, *, upper_bound=None, lower_bound=None, **kwargs):
+    def bounded_synthesis(self, *, upper_bound=None, lower_bound=None,
+                          include_upper=False, include_lower=False, **kwargs):
         """
-        Synthesis based on an upper and a lower bound (not inclusive),
-        both of which must exist! The data type of upper_bound and
-        lower_bound must be able to be compared and upper_bound
-        must be larger than lower_bound. Subclasses can override
+        Synthesis based on an upper and a lower bound,
+        both of which must exist. Subclasses can override
         bounded_constraints() and call this function as public API.
-        bounded_constraints() can also raise ValueError if given
-        bounds are not valid. A synthesized value is returned if
-        synthesis is successful; otherwise, we return None.
+        A synthesized value is returned if synthesis is successful;
+        otherwise, we return None.
         """
         if not upper_bound or not lower_bound:
             raise ValueError("Two bounds must be specified. Perhaps use a different"
                              "synthesis method or simply call random()?")
-        if upper_bound <= lower_bound:
-            raise ValueError("The upper bound should at least "
-                             "be larger than the lower bound.")
-        self.bounded_constraints(upper_bound, lower_bound, **kwargs)
+        self.bounded_constraints(upper_bound, lower_bound, include_upper, include_lower, **kwargs)
         if self.value is not None:
             return self.to_python(self.value)
         else:
@@ -198,6 +206,93 @@ class Synthesizer(ABC):
         """Remove all constraints in the solver."""
         self.solver.reset()
 
+    def splice_synthesis(self, constraints_list):
+        """
+        Splice deletion-by-synthesis should call this method to generate a new
+        synthesized value. "constraints_list" is a list of disjunctive constraints.
+        Each member in "constraints_list" should be a dictionary of value constraints
+        (conjunctive). Synthesis stops as soon as one set of conjunctive constraints
+        generates a new value. If synthesis is unsuccessful for all sets, the caller
+        then needs to make sure the object's trusted and synthesized flag are set
+        properly and performs random-value synthesis (see middleware.py).
+        """
+        if not constraints_list:
+            return None
+        for constraints in constraints_list:
+            synthesized_value = self._splice_synthesis(constraints)
+            if synthesized_value is not None:
+                return synthesized_value
+        return None
+
+    def _splice_synthesis(self, constraints):
+        """
+        "constraints" should be a dictionary of conjunctive value constraints.
+        If constraints is None or an empty dictionary, no synthesis would occur.
+        Note that depending on the constraints, synthesis may or may not succeed.
+        """
+        # Empty or None constraints case
+        if not constraints:
+            return None
+        # Consolidate constraints as much as we can.
+        # As a result, we create a new mapping 'cnts'
+        cnts = dict()
+        if 'lt' in constraints:
+            cnts['lt'] = min(constraints['lt'])
+        if 'le' in constraints:
+            cnts['le'] = min(constraints['le'])
+        if 'gt' in constraints:
+            cnts['gt'] = max(constraints['gt'])
+        if 'ge' in constraints:
+            cnts['ge'] = max(constraints['ge'])
+        upper_bound, lower_bound, include_upper, include_lower = None, None, False, False
+        if 'lt' in cnts and 'le' in cnts:
+            if cnts['lt'] <= cnts['le']:
+                upper_bound = cnts['lt']
+            else:
+                upper_bound = cnts['le']
+                include_upper = True
+        elif 'lt' in cnts:
+            upper_bound = cnts['lt']
+        elif 'le' in cnts:
+            upper_bound = cnts['le']
+            include_upper = True
+        if 'gt' in cnts and 'ge' in cnts:
+            if cnts['gt'] >= cnts['ge']:
+                lower_bound = cnts['gt']
+            else:
+                lower_bound = cnts['ge']
+                include_lower = True
+        elif 'gt' in cnts:
+            lower_bound = cnts['gt']
+        elif 'ge' in cnts:
+            lower_bound = cnts['ge']
+            include_lower = True
+        if upper_bound is not None and lower_bound is not None:
+            self.bounded_constraints(upper_bound, lower_bound, include_upper, include_lower)
+        else:
+            if 'lt' in cnts:
+                self.lt_constraint(cnts['lt'])
+            if 'le' in cnts:
+                self.le_constraint(cnts['le'])
+            if 'gt' in cnts:
+                self.gt_constraint(cnts['gt'])
+            if 'ge' in cnts:
+                self.ge_constraint(cnts['ge'])
+
+        if 'eq' in constraints:
+            # 'eq' constraints is a list of (func, value)
+            for constraint in constraints['eq']:
+                self.eq_constraint(constraint[0], constraint[1])
+
+        if 'ne' in constraints:
+            for constraint in constraints['ne']:
+                self.ne_constraint(constraint)
+
+        if self.value is not None:
+            return self.to_python(self.value)
+        else:
+            return None
+
 
 class IntSynthesizer(Synthesizer):
     """Synthesize an integer value, subclass from Synthesizer."""
@@ -207,14 +302,16 @@ class IntSynthesizer(Synthesizer):
     @staticmethod
     def to_python(value):
         if value is not None:
-            return SpliceInt(value.as_long(), trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceInt(value.as_long(), trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return SpliceInt(value, trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceInt(value, trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
@@ -230,14 +327,16 @@ class FloatSynthesizer(Synthesizer):
             fraction_value = value.as_fraction()
             # Lose precision when casting into float
             float_value = float(fraction_value.numerator) / float(fraction_value.denominator)
-            return SpliceFloat(float_value, trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceFloat(float_value, trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return SpliceFloat(value, trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceFloat(value, trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
@@ -254,7 +353,8 @@ class BitVecSynthesizer(Synthesizer):
     @staticmethod
     def to_python(value):
         if value is not None:
-            return SpliceInt(value.as_long(), trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceInt(value.as_long(), trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
@@ -262,7 +362,8 @@ class BitVecSynthesizer(Synthesizer):
     def simple_synthesis(value):
         """Python can automatically convert a bit vector to int."""
         if value is not None:
-            return SpliceInt(value, trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceInt(value, trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
@@ -347,7 +448,7 @@ class StrSynthesizer(Synthesizer):
             # False so synthesis always return 'unsat'.
             self.solver.add(False)
         else:
-            template = self._lt_constraint(to_trusted(value, True), **kwargs)
+            template = self._lt_constraint(value, **kwargs)
             self.solver.add(InRe(self.var, template))
 
     def le_constraint(self, value, **kwargs):
@@ -355,7 +456,6 @@ class StrSynthesizer(Synthesizer):
         The same rules as in lt_constraint() except that
         the synthesized string can be the same as value.
         """
-        value = to_trusted(value, True)
         lt_template = self._lt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, lt_template), InRe(self.var, eq_template)))
@@ -368,9 +468,6 @@ class StrSynthesizer(Synthesizer):
         lt_constraint() as the public API, not this function.
         'value' should never be an empty string in this function.
         """
-        if isinstance(value, SpliceStr):
-            # Get str type value if value is SpliceStr
-            value = to_trusted(value, True)
         # Create a regular expression template for synthesis
         bound_length = len(value)
         offset = 0
@@ -428,7 +525,7 @@ class StrSynthesizer(Synthesizer):
         0 to offset would be the same in synthesized string as in value
         (if offset < the length of the value). Offset is by default 0.
         """
-        template = self._gt_constraint(to_trusted(value, True), **kwargs)
+        template = self._gt_constraint(value, **kwargs)
         self.solver.add(InRe(self.var, template))
 
     def ge_constraint(self, value, **kwargs):
@@ -436,7 +533,6 @@ class StrSynthesizer(Synthesizer):
         The same rules as in gt_constraint() except that
         the synthesized string can be the same as value.
         """
-        value = to_trusted(value, True)
         gt_template = self._gt_constraint(value, **kwargs)
         eq_template = Re(StringVal(value))
         self.solver.add(Or(InRe(self.var, gt_template), InRe(self.var, eq_template)))
@@ -448,9 +544,6 @@ class StrSynthesizer(Synthesizer):
         for more detailed description. User should always call
         gt_constraint() as the public API, not this function.
         """
-        if isinstance(value, SpliceStr):
-            # Get str type value if value is SpliceStr
-            value = to_trusted(value, True)
         bound_length = len(value)
         if bound_length == 0:
             # If value is an empty string, any non-empty string will do
@@ -512,9 +605,15 @@ class StrSynthesizer(Synthesizer):
         # front of it must be NULL as well.
         for i in range(len(chars) - 1):
             self.solver.add(If(chars[i+1] == 0, chars[i] == 0, True))
-        self.solver.add(func(chars, **kwargs) == to_trusted(value, True))
+        self.solver.add(func(chars, **kwargs) == value)
 
-    def bounded_constraints(self, upper_bound, lower_bound, **kwargs):
+    def ne_constraint(self, value, **kwargs):
+        """Not equal is simply lt OR gt."""
+        lt_template = self._lt_constraint(value, **kwargs)
+        gt_template = self._gt_constraint(value, **kwargs)
+        self.solver.add(Or(InRe(self.var, lt_template), InRe(self.var, gt_template)))
+
+    def bounded_constraints(self, upper_bound, lower_bound, include_upper=False, include_lower=False, **kwargs):
         """
         We cannot simply add lt_constraint() and gt_constraint() without
         specifying a common offset. Otherwise, it is possible that the template
@@ -531,8 +630,32 @@ class StrSynthesizer(Synthesizer):
                 pos += 1
             else:
                 break
-        self.lt_constraint(upper_bound, offset=pos)
-        self.gt_constraint(lower_bound, offset=pos)
+        # Handle a special case where at the offset the upper_bound
+        # character is exactly one above the lower_bound character.
+        # If there are still more characters after the offset, we can
+        # still synthesize a valid string that is within the bounds,
+        # but it will not work when we combine le_constraint() (or
+        # lt_constraint()) and ge_constraint() (or gt_constraint()).
+        # Example: '987-12' (upper) and '987-08' (lower). Instead,
+        # we just need to change the offset and do a lower bound.
+        if ord(lower_bound[pos]) + 1 == ord(upper_bound[pos]):
+            if include_lower:
+                self.ge_constraint(lower_bound, offset=pos+1)
+            else:
+                self.gt_constraint(lower_bound, offset=pos+1)
+        else:
+            if include_upper and include_lower:
+                self.le_constraint(upper_bound, offset=pos)
+                self.ge_constraint(lower_bound, offset=pos)
+            elif include_upper:
+                self.le_constraint(upper_bound, offset=pos)
+                self.gt_constraint(lower_bound, offset=pos)
+            elif include_lower:
+                self.lt_constraint(upper_bound, offset=pos)
+                self.ge_constraint(lower_bound, offset=pos)
+            else:
+                self.lt_constraint(upper_bound, offset=pos)
+                self.gt_constraint(lower_bound, offset=pos)
 
     @staticmethod
     def to_python(value):
@@ -545,16 +668,19 @@ class StrSynthesizer(Synthesizer):
                     if value[i].as_long() > 0:
                         # chr converts integer to ASCII character
                         reconstruct_str += chr(value[i].as_long())
-                return SpliceStr(reconstruct_str, trusted=False, synthesized=True)
+                # Synthesized value needs no taint
+                return SpliceStr(reconstruct_str, trusted=False, synthesized=True, taints=empty_taint())
             else:
-                return SpliceStr(value.as_string(), trusted=False, synthesized=True)
+                # Synthesized value needs no taint
+                return SpliceStr(value.as_string(), trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
     @staticmethod
     def simple_synthesis(value):
         if value is not None:
-            return SpliceStr(value, trusted=False, synthesized=True)
+            # Synthesized value needs no taint
+            return SpliceStr(value, trusted=False, synthesized=True, taints=empty_taint())
         else:
             return None
 
@@ -564,7 +690,6 @@ class DatetimeSynthesizer(FloatSynthesizer):
     @staticmethod
     def to_float(value):
         """Convert value (a datetime object) to float."""
-        value = to_trusted(value, True)
         return value.timestamp()
 
     @staticmethod
@@ -585,6 +710,7 @@ class DatetimeSynthesizer(FloatSynthesizer):
             minute = dt.minute
             second = dt.second
             microsecond = dt.microsecond
+            # Synthesized value needs no taint
             return SpliceDatetime(year=year,
                                   month=month,
                                   day=day,
@@ -593,7 +719,8 @@ class DatetimeSynthesizer(FloatSynthesizer):
                                   second=second,
                                   microsecond=microsecond,
                                   trusted=False,
-                                  synthesized=True)
+                                  synthesized=True,
+                                  taints=empty_taint())
         else:
             return None
 
@@ -616,7 +743,7 @@ def init_synthesizer(value, vectorized=False):
         return BitVecSynthesizer()
     elif isinstance(value, SpliceInt):       # Note that int is included
         return IntSynthesizer()
-    elif isinstance(value, SpliceStr):       # Note that str is *not* included
+    elif isinstance(value, SpliceStr):       # Note that str is included
         return StrSynthesizer()
     elif isinstance(value, SpliceFloat):     # Note that float is included
         return FloatSynthesizer()
@@ -661,6 +788,10 @@ def int_synthesizer_test():
     synthesizer.eq_constraint(calc, 40, y=5)  # y is a keyed argument
     int_val = synthesizer.to_python(synthesizer.value)
     assert int_val == 15, "{val} should be equal to 15, but it is not.".format(val=int_val)
+    synthesizer.reset_constraints()
+    synthesizer.ne_constraint(40)
+    int_val = synthesizer.to_python(synthesizer.value)
+    assert int_val != 40, "{val} should not be equal to 40, but it is.".format(val=int_val)
 
 
 def float_synthesizer_test():
