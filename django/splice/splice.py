@@ -1,9 +1,9 @@
 import functools
 import warnings
 import copy
-from bitarray import bitarray
 from django.splice.utils import is_class_method, is_static_method
 from django.splice.identity import TaintSource, empty_taint
+from django.splice import settings
 
 
 # Special methods that should not be decorated.
@@ -32,8 +32,8 @@ do_not_decorate = {'__init__',
                    # in decoration, because doing so would create an infinite recursion!
                    # Decorating methods that return a bool value does nothing anyways.
                    '__ne__',
-                   # Pickling Class Instances. deepcopy() might call them for pickling,
-                   # and deepcopy is used in decoration. They shouldn't be decorated anyways.
+                   # Pickling Class Instances. deepcopy()/copy() might call them for pickling,
+                   # and deepcopy/copy is used in decoration. They shouldn't be decorated anyways.
                    # (ref: https://docs.python.org/3/library/pickle.html#pickling-class-instances)
                    '__getnewargs_ex__',
                    '__getnewargs__',
@@ -42,34 +42,183 @@ do_not_decorate = {'__init__',
                    '__reduce__',
                    '__reduce_ex__',
                    '__deepcopy__',
+                   '__copy__',
                    }
 
 
+def check_tag(obj, check_synthesis=False, depth=2):
+    """
+    By default, the function returns the trusted tag of an obj. If check_synthesis
+    is set to be True, then it will also return the synthesized tag of the obj.
+    Note that, for example, if an obj contains an untrusted data attribute, the
+    obj itself will be considered to be untrusted (same for the synthesized tag).
+    We recursively go through obj's data attributes but at most depth levels. By
+    default, we only look into the obj's data attributes, not its attribute's data
+    attribute (i.e., depth=1) unless the attribute is a sequence or a map (in such
+    cases we do not decrement the depth).
+    """
+    if isinstance(obj, SpliceMixin):
+        if check_synthesis:
+            return obj.trusted, obj.synthesized
+        return obj.trusted
+    elif depth == 0:
+        if check_synthesis:
+            return True, False
+        else:
+            return True
+    # For dict-like mapping objs
+    ################################################################################################################
+    # NOTE: According to Python data model, it is recommended that any customized mappings provide the items()
+    #       method (as well as __iter__, which should also be provided by any customized sequences). We have no way
+    #       to know in general if an obj is an instance of a mapping if actual implementation does not follow
+    #       Python's recommended data model. Reference here:
+    #       https://docs.python.org/3.8/reference/datamodel.html?emulating-container-types#emulating-container-types
+    ################################################################################################################
+    elif hasattr(obj, 'items') and hasattr(obj, '__iter__'):
+        t = True
+        for k, v in obj.items():
+            if check_synthesis:
+                trusted, synthesized = check_tag(k, check_synthesis, depth-1)
+                # If k is synthesized, it must not be trusted. No need to continue.
+                if synthesized:
+                    return trusted, synthesized
+                # If k is not synthesized, it can still be untrusted
+                else:
+                    t = t and trusted
+                # The same logic used in k is used in v
+                trusted, synthesized = check_tag(v, check_synthesis, depth-1)
+                if synthesized:
+                    return trusted, synthesized
+                else:
+                    t = t and trusted
+            else:
+                trusted = check_tag(k, check_synthesis, depth-1)
+                if not trusted:
+                    return trusted
+                trusted = check_tag(v, check_synthesis, depth-1)
+                if not trusted:
+                    return trusted
+        if check_synthesis:
+            return t, False
+        else:
+            return True
+    # For list-like sequence objs. We use isinstance to test 'list',
+    # 'tuple' and 'set' for now. We do not want to use something like
+    # hasattr(obj, '__iter__') because data types such as 'str' and
+    # 'bytes', which are clearly not tainted, will have '__iter__'!
+    elif isinstance(obj, list) or isinstance(obj, tuple) or isinstance(obj, set):
+        t = True
+        for v in obj:
+            if check_synthesis:
+                trusted, synthesized = check_tag(v, check_synthesis, depth-1)
+                if synthesized:
+                    return trusted, synthesized
+                else:
+                    t = t and trusted
+            else:
+                trusted = check_tag(v, check_synthesis, depth-1)
+                if not trusted:
+                    return trusted
+        if check_synthesis:
+            return t, False
+        else:
+            return True
+    ####################################################
+    # TODO: Add other specific data types if needed here
+    ####################################################
+    ############################################################################
+    # NOTE: We try out best to iterative through a generic obj's data attributes
+    #       if the obj has __dict__ attribute for us to traverse through and if
+    #       it is not yet the deepest we are told to go.
+    ############################################################################
+    # elif hasattr(obj, '__dict__'):
+    #     t = True
+    #     for _, attr in vars(obj).items():
+    #         if check_synthesis:
+    #             trusted, synthesized = check_tag(attr, check_synthesis, depth-1)
+    #             if synthesized:
+    #                 return trusted, synthesized
+    #             else:
+    #                 t = t and trusted
+    #         else:
+    #             trusted = check_tag(attr, check_synthesis, depth-1)
+    #             if not trusted:
+    #                 return trusted
+    #     if check_synthesis:
+    #         return t, False
+    #     else:
+    #         return True
+    else:
+        if settings.SPLICE_DEBUG:
+            warnings.warn("{obj} (of type {type}) cannot be inspected for tags"
+                          " (perhaps because it is a built-in typed obj".format(obj=obj, type=type(obj)))
+        if check_synthesis:
+            return True, False
+        else:
+            return True
+
+
 def is_untrusted(value):
-    """Checks if a value is/contains untrusted data."""
+    """
+    Checks if a value is/contains untrusted data.
+    NOTE THAT THIS FUNCTION IS DEPRECATED AND SHOULD NOT BE USED.
+    """
+    warnings.warn("is_untrusted is deprecated; use check_tag instead", DeprecationWarning)
     if isinstance(value, SpliceMixin):
         return not value.trusted
     # Recursively check values in a list or other data structures
-    # FIXME: for data structures with key/value pairs, if __iter__ returns
-    #  keys only (in the for loop), then only keys are checked.
-    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or isinstance(value, dict):
+
+    # FIXME: A more generic way might be to check if value contains __iter__
+    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set):
         for v in value:
             if is_untrusted(v):
                 return True
+    # Check key/value pairs for dictionary
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if is_untrusted(k):
+                return True
+            if is_untrusted(v):
+                return True
+    ###########################################
+    # TODO: Add other data types if needed here
+    ###########################################
+    else:
+        if settings.SPLICE_DEBUG:
+            warnings.warn("{value} (of type {type}) cannot be "
+                          "inspected for trustiness".format(value=value, type=type(value)))
     return False
 
 
 def is_synthesized(value):
-    """Check if a value is/contains synthesized data."""
+    """
+    Check if a value is/contains synthesized data.
+    NOTE THAT THIS FUNCTION IS DEPRECATED AND SHOULD NOT BE USED.
+    """
+    warnings.warn("is_synthesized is deprecated; use check_tag instead", DeprecationWarning)
+
     if isinstance(value, SpliceMixin):
         return value.synthesized
     # Recursively check values in a list or other data structures
-    # FIXME: for data structures with key/value pairs, if __iter__ returns
-    #  keys only (in the for loop), then only keys are checked.
-    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or isinstance(value, dict):
+    # FIXME: A more generic way might be to check if value contains __iter__
+    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set):
         for v in value:
             if is_synthesized(v):
                 return True
+    # Check key/value pairs for dictionary
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if is_synthesized(k):
+                return True
+            if is_synthesized(v):
+                return True
+    ###########################################
+    # TODO: Add other data types if needed here
+    ###########################################
+    else:
+        if settings.SPLICE_DEBUG:
+            warnings.warn("{value} (of type {type}) cannot be "
+                          "inspected for synthesis".format(value=value, type=type(value)))
     return False
 
 
@@ -77,43 +226,65 @@ def contains_untrusted_arguments(*args, **kwargs):
     """Check if arguments passed into a function/method contains untrusted and synthesized value."""
     untrusted = False
     for arg in args:
-        if is_synthesized(arg):
+        trusted, synthesized = check_tag(arg, check_synthesis=True)
+        if synthesized:
             return True, True
-        elif is_untrusted(arg):
+        elif not trusted:
             untrusted = True
     for _, v in kwargs.items():
-        if is_synthesized(v):
+        trusted, synthesized = check_tag(v, check_synthesis=True)
+        if synthesized:
             return True, True
-        elif is_untrusted(v):
+        elif not trusted:
             untrusted = True
     return untrusted, False
 
 
-def is_tainted_by(value, taints):
-    """Store the taint(s) of a value to "taints" argument. Note that taints *cannot* be None. """
-    if isinstance(value, SpliceMixin):
-        taints |= value.taints
+def is_tainted_by(obj, depth=2):
+    """Return the taint of an obj. Note that taints *cannot* be None. """
+    taints = empty_taint()
+    if isinstance(obj, SpliceMixin):
+        return obj.taints
+    elif depth == 0:
         return taints
-    # Recursively check values in a list or other data structures
-    # FIXME: for data structures with key/value pairs, if __iter__ returns
-    #  keys only (in the for loop), then only keys are checked.
-    elif isinstance(value, list) or isinstance(value, tuple) or isinstance(value, set) or isinstance(value, dict):
-        for v in value:
-            taints = is_tainted_by(v, taints)
+    # For dict-like mapping objs (see notes in check_tag)
+    elif hasattr(obj, 'items') and hasattr(obj, '__iter__'):
+        for k, v in obj.items():
+            taints |= is_tainted_by(k, depth-1)
+            taints |= is_tainted_by(v, depth-1)
+    # For list-like sequence objs
+    elif isinstance(obj, list) or isinstance(obj, tuple) or isinstance(obj, set):
+        for v in obj:
+            taints |= is_tainted_by(v, depth-1)
+    ####################################################
+    # TODO: Add other specific data types if needed here
+    ####################################################
+    ############################################################################
+    # NOTE: We try out best to iterative through a generic obj's data attributes
+    #       if the obj has __dict__ attribute for us to traverse through and if
+    #       it is not yet the deepest we are told to go.
+    ############################################################################
+    # elif hasattr(obj, '__dict__'):
+    #     for _, attr in vars(obj).items():
+    #         taints |= is_tainted_by(attr, depth-1)
+    else:
+        if settings.SPLICE_DEBUG:
+            warnings.warn("{obj} (of type {type}) cannot be "
+                          "inspected for taints".format(obj=obj, type=type(obj)))
     return taints
 
 
 def union_argument_taints(*args, **kwargs):
     """
     Return a union of all taints associated with args and kwargs. Note that the return object
-    is *never* None. If no taints, this function will return a bitarray of all 0s.
+    is *never* None. If no taints, this function will return a bitarray of all 0s (or 0 if int
+    is used as the taint).
     """
-    # Initialize a bitarray of zeros
     taints = empty_taint()
     for arg in args:
-        taints = is_tainted_by(arg, taints)
+        taints |= is_tainted_by(arg)
     for _, v in kwargs.items():
-        taints = is_tainted_by(v, taints)
+        taints |= is_tainted_by(v)
     return taints
 
 
@@ -129,7 +300,7 @@ def to_trusted(value, forced=False):
     if isinstance(value, SpliceMixin):
         return value.to_trusted(forced)
     else:
-        return SpliceMixin.to_splice(value, True, False, empty_taint())
+        return SpliceMixin.to_splice(value, True, False, empty_taint(), [])
 
 
 def untrusted(func):
@@ -148,6 +319,11 @@ def untrusted(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         res = func(*args, **kwargs)
+        # With taint optimization, forms.fields to_python() methods
+        # need not propagate taint because we can simply reattach
+        # taint at the end of data sanitization (in forms.py).
+        if settings.TAINT_OPTIMIZATION:
+            return res
         # Some quick return
         if res is NotImplemented or res is None:
             return res
@@ -168,7 +344,7 @@ def to_untrusted(value):
         value.trusted = False
         return value
     else:
-        return SpliceMixin.to_splice(value, False, False, empty_taint())
+        return SpliceMixin.to_splice(value, False, False, empty_taint(), [])
 
 
 def to_synthesized(value):
@@ -182,7 +358,7 @@ def to_synthesized(value):
         value.synthesized = True
         return value
     else:
-        return SpliceMixin.to_splice(value, False, True, None)
+        return SpliceMixin.to_splice(value, False, True, empty_taint(), [])
 
 
 def add_taints(value, taints):
@@ -195,7 +371,7 @@ def add_taints(value, taints):
         value.taints = taints
         return value
     else:
-        return SpliceMixin.to_splice(value, True, False, taints)
+        return SpliceMixin.to_splice(value, True, False, taints, [])
 
 
 class MetaSplice(type):
@@ -219,7 +395,7 @@ class MetaSplice(type):
         # such, we would create an infinite recursion!
         obj = cls.__new__(cls, *args, **kwargs)
         untrusted, synthesized = contains_untrusted_arguments(*args, **kwargs)
-        obj = SpliceMixin.to_splice(obj, not untrusted, synthesized, None)
+        obj = SpliceMixin.to_splice(obj, not untrusted, synthesized, empty_taint(), [])
         # Object construction may also set
         # the flags explicitly in "kwargs".
         trusted = None
@@ -236,6 +412,39 @@ class MetaSplice(type):
         if "taints" in kwargs:
             taints = kwargs["taints"]
             del kwargs["taints"]
+        # Object construction may also set constraints.
+        # (although unlikely). "constraints" are a list
+        # of callbacks that e.g., enclosing data structures
+        # define to concretize symbolic constraints that
+        # are defined for the object. Each callback should
+        # produce a set of concrete constraints in
+        # disjunctive normal form. If an object has
+        # multiple callbacks, each set of concrete constraints
+        # are AND together to create a final set of
+        # constraints in disjunctive normal form. This
+        # process will be performed at deletion time by
+        # our deletion mechanism defined in middleware.py.
+        constraints = []
+        if "constraints" in kwargs:
+            if kwargs["constraints"] is None:
+                pass
+            # The argument is a callable (callback function)
+            elif callable(kwargs["constraints"]):
+                constraints.append(kwargs["constraints"])
+            else:
+                # A set of callback functions can be provided.
+                try:
+                    cb_iterator = iter(kwargs["constraints"])
+                except TypeError:
+                    raise TypeError("If you want to attach constraints to this Splice object,"
+                                    "you can either provide a single callable or a collection"
+                                    "of callables that return maps of concrete constraints.")
+                for c in cb_iterator:
+                    if callable(c):
+                        constraints.append(c)
+                    else:
+                        raise TypeError("Each constraint must be a callable.")
+            del kwargs["constraints"]
 
         obj.__init__(*args, **kwargs)
 
@@ -272,6 +481,7 @@ class MetaSplice(type):
         obj._taints = union_argument_taints(*args, **kwargs)
         if taints is not None:
             obj._taints |= taints
+        obj._constraints = constraints
         return obj
 
 
@@ -286,7 +496,7 @@ class SpliceMixin(metaclass=MetaSplice):
 
     registered_cls = {}
 
-    def __new__(cls, *args, trusted=True, synthesized=False, taints=None, **kwargs):
+    def __new__(cls, *args, trusted=True, synthesized=False, taints=None, constraints=[], **kwargs):
         """
         We must override __new__ so that "trusted" and "synthesized"
         don't flow into the super().__new__, which can be bad for
@@ -361,7 +571,7 @@ class SpliceMixin(metaclass=MetaSplice):
     #     return result
 
     @staticmethod
-    def to_splice(value, trusted, synthesized, taints):
+    def to_splice(value, trusted, synthesized, taints, constraints):
         """
         Convert a value to the splice-aware type if
         it exists. The flags will be set based on
@@ -377,6 +587,7 @@ class SpliceMixin(metaclass=MetaSplice):
             value.trusted = trusted
             value.synthesized = synthesized
             value.taints = taints
+            value.constraints = constraints
             return value
         # bool is a subclass of int, so we must check it first
         # it cannot be usefully converted to a splice-aware type
@@ -385,9 +596,16 @@ class SpliceMixin(metaclass=MetaSplice):
         # Conversion happens here. We only know how to convert
         # classes that are registered (i.e., classes that subclass
         # SpliceMixin, which automatically registers the class)
+        # FIXME: generally speaking, we are able to convert subclasses
+        #  of the registered classes as well. Fix it in the future.
         cls = value.__class__.__name__
         if cls in SpliceMixin.registered_cls:
-            return SpliceMixin.registered_cls[cls].splicify(value, trusted, synthesized, taints)
+            return SpliceMixin.registered_cls[cls].splicify(value, trusted, synthesized, taints, constraints)
+        # FIXME: quick fix for SafeString but should be removed when the
+        #  FIXME above is fixed (since SafeString is a subclass of str).
+        elif isinstance(value, str):
+            from django.splice.splicetypes import SpliceStr
+            return SpliceStr.splicify(value, trusted, synthesized, taints, constraints)
         #####################################################
         #  Recursively convert values in list or other structured data
         #  Note that we do not just use list/dict/set comprehension as
@@ -396,21 +614,21 @@ class SpliceMixin(metaclass=MetaSplice):
         #  around in recursive functions to be mutated.
         elif isinstance(value, list):
             for i in range(len(value)):
-                value[i] = SpliceMixin.to_splice(value[i], trusted, synthesized, taints)
+                value[i] = SpliceMixin.to_splice(value[i], trusted, synthesized, taints, constraints)
             return value
         elif isinstance(value, tuple):
             # Creating a new tuple is fine because tuple is immutable
-            return tuple(SpliceMixin.to_splice(v, trusted, synthesized, taints) for v in value)
+            return tuple(SpliceMixin.to_splice(v, trusted, synthesized, taints, constraints) for v in value)
         # Cannot modify a set during iteration, so we do it this way:
         elif isinstance(value, set):
-            list_copy = [SpliceMixin.to_splice(v, trusted, synthesized, taints) for v in value]
+            list_copy = [SpliceMixin.to_splice(v, trusted, synthesized, taints, constraints) for v in value]
             value.clear()
             value.update(list_copy)
             return value
         # Cannot modify a dict during iteration, so we do it this way:
         elif isinstance(value, dict):
-            dict_copy = {SpliceMixin.to_splice(k, trusted, synthesized, taints):
-                         SpliceMixin.to_splice(v, trusted, synthesized, taints)
+            dict_copy = {SpliceMixin.to_splice(k, trusted, synthesized, taints, constraints):
+                         SpliceMixin.to_splice(v, trusted, synthesized, taints, constraints)
                          for k, v in value.items()}
             value.clear()
             value.update(dict_copy)
@@ -470,7 +688,11 @@ class SpliceMixin(metaclass=MetaSplice):
                 # We must use deep copy so that it actually holds a copy
                 # of the original "self", not just a reference. This is
                 # important for mutable objects.
-                self = copy.deepcopy(args[0])
+                # TODO: Since Splice objects are all built-in primitive types,
+                #  we probably need only shallow copy.
+                # TODO: Test that shallow copy is sufficient.
+                # self = copy.deepcopy(args[0])
+                self = copy.copy(args[0])
                 # Execution the original method
                 res = func(*args, **kwargs)
                 # If in-place updates occurred in func, then the object
@@ -495,7 +717,7 @@ class SpliceMixin(metaclass=MetaSplice):
                 # Some quick return (nothing else to do)
                 if res is None or res is NotImplemented or isinstance(res, SpliceMixin):
                     return res
-                return SpliceMixin.to_splice(res, not untrusted, synthesized, taints)
+                return SpliceMixin.to_splice(res, not untrusted, synthesized, taints, [])
 
             return wrapper
 
@@ -529,9 +751,22 @@ class SpliceMixin(metaclass=MetaSplice):
         # decorated in the first place.
         handled_methods.update(do_not_decorate)
         # __mro__ defines the list of *ordered* base classes
-        # (the first being cls and the second being SpliceMixin).
-        # SpliceMixin should *not* be decorated, so add them all in handled_methods
-        mixin_cls = cls.__mro__[1]  # IMPORTANT: SpliceMixin MUST be the second class in MRO!
+        # the first being cls.
+        # To allow classes to inherit from a Splice class,
+        # for example, to allow: class A(SpliceStr), we will
+        # need to first find SpliceMinxin in __mro__. Note that
+        # in cases where a class inheris from a Splice class, all
+        # Splice class methods have been properly decorated, so
+        # we can safely skip the rest of the decoration if
+        # Spliceixin is not the second in __mro__!
+        for pos, mixin_cls in enumerate(cls.__mro__):
+            if mixin_cls is SpliceMixin:
+                break
+        if pos != 1:
+            return cls
+        # SpliceMixin should *not* be decorated, so we will add them all in handled_methods
+        # IMPORTANT: SpliceMixin MUST be the second class in MRO for ths rest of the code to execute
+        mixin_cls = cls.__mro__[1]
         for key in mixin_cls.__dict__:
             value = getattr(mixin_cls, key)
             if not callable(value):
@@ -610,8 +845,34 @@ class SpliceMixin(metaclass=MetaSplice):
     def taints(self, taints):
         self._taints = taints
 
+    @property
+    def constraints(self):
+        return self._constraints
+
+    @constraints.setter
+    def constraints(self, constraints):
+        if not constraints:
+            self._constraints = []
+        elif callable(constraints):
+            self._constraints = [constraints]
+        else:
+            # A set of callback functions can be provided.
+            try:
+                cb_iterator = iter(constraints)
+            except TypeError:
+                raise TypeError("If you want to attach constraints to this Splice object,"
+                                "you can either provide a single callable or a collection"
+                                "of callables that return maps of concrete constraints.")
+            self._constraints = []
+            for c in cb_iterator:
+                if callable(c):
+                    self._constraints.append(c)
+                else:
+                    raise TypeError("Each constraint must be a callable that returns a map"
+                                    "of concrete constraints for Z3 to synthesize.")
+
     @classmethod
-    def splicify(cls, value, trusted, synthesized, taints):
+    def splicify(cls, value, trusted, synthesized, taints, constraints):
         """
         Convert a value to its splice-aware type and set the flags. Reclassing an object
         by assigning __class__ does *not* always work because __class__ assignment is only
@@ -623,6 +884,7 @@ class SpliceMixin(metaclass=MetaSplice):
             value.trusted = trusted
             value.synthesized = synthesized
             value.taints = taints
+            value.constraints = constraints
             return value
         except TypeError as e:
             raise NotImplementedError("You cannot inherit splicify() from SpliceMixin for this class;"
