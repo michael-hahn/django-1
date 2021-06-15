@@ -9,7 +9,7 @@ from django.splice.splice import is_synthesized, to_untrusted, add_taints
 from django.splice.splicetypes import SpliceMixin, SpliceStr, SpliceBytes
 from django.splice.identity import TaintSource, set_current_user_id, empty_taint, to_int, get_taint_from_id
 from django.splice.synthesis import init_synthesizer
-from django.splice.replace import replace
+from django.splice import replace
 from django.splice.constraints import merge_constraints
 from django.splice import settings
 from django.db.models.query import QuerySet
@@ -365,56 +365,75 @@ class SpliceDeletionMiddleware(object):
             # But it seem like finding Python objects in memory can only be best effort:
             # https://stackoverflow.com/questions/62686644/python-find-current-objects-in-memory.
             # This is also because not all objects are tracked by GC.
+
+            # self.cp.enable()
+            # to_replace holds a list of *old* objects to be replaced
+            to_replace = []
             objs = gc.get_objects()
             for obj in objs:
-                # Only Splice objects with the taint of the user to be deleted need to be synthesized.
+                # Only Splice objects with the taint of the
+                # user to be deleted need to be synthesized.
+                # We will add those objects into to_replace.
                 if isinstance(obj, SpliceMixin) and obj.taints == dutaint:
-                    # Perform Splice object deletion through synthesis.
+                    to_replace.append(obj)
+            # Get referrers of all objs that must be replaced. "paths" is a dictionary that maps
+            # an object ID (for objects in to_replace) to all the paths of the object's referrers.
+            # *************************************************************************************
+            # NOTE: We have to synthesize-and-replace *one object at a time* to ensure correctness!
+            # *************************************************************************************
+            paths = replace.get_path_map(to_replace)
+            # Now we synthesize and replace *for each object* in to_replace
+            for obj in to_replace:
+                # Concretize constraints for obj using symbolic constraints from its
+                # enclosing data structure.
+                concrete_constraints = []
+                # Each constraint in obj.constraints is a callable that takes the
+                # object as the only argument. Each callback function returns
+                # concrete constraints in disjunctive normal form.
+                for constraint in obj.constraints:
+                    concrete_constraints.append(constraint(obj))
+                # Merge all concrete constraints, if needed
+                if not concrete_constraints:
+                    merged_constraints = None
+                else:
+                    merged_constraints = concrete_constraints[0]
+                    for concrete_constraint in concrete_constraints[1:]:
+                        merged_constraints = merge_constraints(merged_constraints, concrete_constraint)
+                # Use merged concrete constraints to perform value synthesis.
+                # Synthesis handles setting trusted and synthesized flags properly.
+                if not merged_constraints:
+                    # No constraints, no synthesis; the best we can do is to change object attributes.
+                    obj.trusted = False
+                    obj.synthesized = True
+                    obj.taints = empty_taint()
+                    obj.constraints = []
+                else:
+                    # Perform object deletion through synthesis.
                     synthesizer = init_synthesizer(obj)
-                    # Concretize constraints for obj using symbolic constraints from its
-                    # enclosing data structure.
-                    concrete_constraints = []
-                    # Each constraint in obj.constraints is a callable that takes the
-                    # object as the only argument. Each callback function returns
-                    # concrete constraints in disjunctive normal form.
-                    for constraint in obj.constraints:
-                        concrete_constraints.append(constraint(obj))
-                    # Merge all concrete constraints, if needed
-                    if not concrete_constraints:
-                        merged_constraints = None
-                    else:
-                        merged_constraints = concrete_constraints[0]
-                        for concrete_constraint in concrete_constraints[1:]:
-                            merged_constraints = merge_constraints(merged_constraints, concrete_constraint)
-                    # Use merged concrete constraints to perform value synthesis.
-                    # Synthesis handles setting trusted and synthesized flags properly
                     synthesized_obj = synthesizer.splice_synthesis(merged_constraints)
                     if synthesized_obj is not None:
-                        # If synthesis was successful, replace the original obj with the synthesized object.
-                        # Note that using ctypes.memmove does not seem to work (leads to segfault).
+                        # Perform object replacement for objects that have a synthesized version
+                        # We use guppy. Note that using ctypes.memmove does not seem to work (leads to segfault).
                         # ctypes.memmove(id(obj), id(synthesized_obj), object.__sizeof__(obj))
                         # ctypes.memmove ref: https://docs.python.org/2/library/ctypes.html#ctypes.memmove
                         try:
-                            replace(obj, synthesized_obj)
+                            replace.replace(synthesized_obj, paths[id(obj)])
                             obj_synthesized += 1
                         except:
-                            # If replacement failed for some reason, the best we can do is to change object attributes.
-                            logger.info("Replacing {} is unsuccessful, we will mark the object "
-                                        "synthesized instead".format(obj))
-                            obj.trusted = False
-                            obj.synthesized = True
-                            obj.taints = empty_taint()
-                            obj.constraints = []
+                            # Replacement should not fail, but just in case it fails, we want to know.
+                            print("**** replacing {} failed ****".format(obj))
                     else:
-                        # If synthesis failed for some reason, the best we can do is to change object attributes.
+                        # If synthesis failed for some reason (e.g., conflicting constraints),
+                        # the best we can do is to change object attributes.
                         obj.trusted = False
                         obj.synthesized = True
                         obj.taints = empty_taint()
                         obj.constraints = []
-                    obj_deleted += 1
+                obj_deleted += 1
 
             logger.info(",delete,program state,{},{}/{} objects deleted ({} deleted objects are synthesized)"
                         .format(time.perf_counter() - start_timer, obj_deleted, len(objs), obj_synthesized))
+            # self.cp.disable()
 
             # If TAINT_DROP is set, some cached HttpResponse may not contain any taint
             # because taint has already dropped when the response is being rendered (for
@@ -450,6 +469,11 @@ class SpliceDeletionMiddleware(object):
             response._container = [bytes(response.content)]
             # Set the 'delete_user' cookie to 0.
             response.set_cookie('delete_user', 0)
+
+            # Profiling code
+            # p = Stats(self.cp)
+            # p.sort_stats('cumtime')
+            # p.print_stats()
         # A regular request
         else:
             # The request can try to grab a REQUEST reader lock.
@@ -461,9 +485,7 @@ class SpliceDeletionMiddleware(object):
             # (i.e., the time it takes to grab a reader lock)
             start_timer = time.perf_counter()
 
-            # self.cp.enable()
             request_lock.acquire()
-            # self.cp.disable()
 
             logger.info("reader,{},{},{},".format(request.method, request.path, time.perf_counter() - start_timer))
             # For a regular request, business as usual
@@ -471,8 +493,4 @@ class SpliceDeletionMiddleware(object):
         # Release the REQUEST reader or writer lock
         request_lock.release()
 
-        # Profiling code
-        # p = Stats(self.cp)
-        # p.sort_stats('tottime')
-        # p.print_stats()
         return response

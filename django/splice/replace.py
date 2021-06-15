@@ -108,8 +108,27 @@ def _path_key_func(path):
     return 1 if reltype is Path.R_ATTRIBUTE else 0
 
 
-def replace(old, new):
-    for path in sorted(hp.iso(old).pathsin, key=_path_key_func):
+def get_path_map(objs):
+    """
+    Return a dict that maps an object ID to all the paths that refer the object.
+    We should have an entry for each object in "objs".
+    """
+    d = dict()
+    for path in hp.iso(*objs).pathsin:
+        obj_id = id(path.tgt.byid.kind.arg) # path.tgt.byid.kind.arg should point to the object
+        if obj_id not in d:
+            d[obj_id] = [path]
+        else:
+            d[obj_id].append(path)
+    return d
+
+
+def replace(new, paths):
+    """
+    Replace all paths to point to new.
+    Path should be the output of hp.iso().pathsin.
+    """
+    for path in sorted(paths, key=_path_key_func):
         relation = path.path[1]
         try:
             func = _RELATIONS[type(relation).__bases__[0]]
@@ -117,6 +136,23 @@ def replace(old, new):
             print("Unknown relation: {} ({})".format(relation, type(path.src.theone)))
             continue
         func(path.src.theone, relation.r, new)
+
+# !!!SPLICE =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# This is a different implementation where each 'old' object is replaced by the 'new'
+# object. It will call hp.iso().pathsin every time an object needs to be replaced, which
+# results in many scans of the heap if we want to replace a number of objects (i.e.,
+# calling this function in a loop), which incurs lots of overhead. We therefore use
+# get_path_map() and replace() instead to minimize heap walks.
+# =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+# def replace(old, new):
+#     for path in sorted(hp.iso(old).pathsin, key=_path_key_func):
+#         relation = path.path[1]
+#         try:
+#             func = _RELATIONS[type(relation).__bases__[0]]
+#         except KeyError:
+#             print("Unknown relation: {} ({})".format(relation, type(path.src.theone)))
+#             continue
+#         func(path.src.theone, relation.r, new)
 
 
 if __name__ == "__main__":
