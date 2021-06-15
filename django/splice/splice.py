@@ -852,9 +852,9 @@ class SpliceMixin(metaclass=MetaSplice):
     @constraints.setter
     def constraints(self, constraints):
         if not constraints:
-            self._constraints = []
+            pass
         elif callable(constraints):
-            self._constraints = [constraints]
+            self._constraints.append(constraints)
         else:
             # A set of callback functions can be provided.
             try:
@@ -863,7 +863,6 @@ class SpliceMixin(metaclass=MetaSplice):
                 raise TypeError("If you want to attach constraints to this Splice object,"
                                 "you can either provide a single callable or a collection"
                                 "of callables that return maps of concrete constraints.")
-            self._constraints = []
             for c in cb_iterator:
                 if callable(c):
                     self._constraints.append(c)
